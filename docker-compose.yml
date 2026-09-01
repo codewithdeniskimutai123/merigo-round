@@ -1,0 +1,24 @@
+services:
+
+  postgres:
+    image: postgres:17
+    container_name: merigo_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: merigo
+      POSTGRES_USER: merigo_user
+      POSTGRES_PASSWORD: merigo_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: merigo_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres_data:
