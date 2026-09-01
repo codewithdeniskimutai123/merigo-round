@@ -5,11 +5,11 @@ services:
     container_name: merigo_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: merigo
-      POSTGRES_USER: merigo_user
-      POSTGRES_PASSWORD: merigo_password
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
-      - "5432:5432"
+      - "${DB_PORT}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
