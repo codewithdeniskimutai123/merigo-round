@@ -101,3 +101,105 @@ class Cycle(models.Model):
 
     def __str__(self):
         return f"{self.group.name} - Cycle {self.cycle_number}"
+
+
+
+class Round(models.Model):
+
+    class Status(models.TextChoices):
+        UPCOMING = "UPCOMING", "Upcoming"
+        ACTIVE = "ACTIVE", "Active"
+        WAITING_FOR_PAYMENT = "WAITING_FOR_PAYMENT", "Waiting for Payment"
+        READY_FOR_PAYOUT = "READY_FOR_PAYOUT", "Ready for Payout"
+        COMPLETED = "COMPLETED", "Completed"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    id = models.BigAutoField(primary_key=True)
+    cycle = models.ForeignKey(Cycle, on_delete=models.PROTECT, related_name="rounds")
+    round_number = models.PositiveIntegerField()
+    recipient = models.ForeignKey(GroupMembership, on_delete=models.PROTECT, related_name="recipient_rounds")
+    start_date = models.DateField()
+    due_date = models.DateField()
+    status = models.CharField(max_length=30, choices=Status.choices, default=Status.UPCOMING)
+    expected_payout_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["cycle", "round_number"],
+                name="unique_round_number_per_cycle"
+            )
+        ]
+
+        indexes = [
+            models.Index(
+                fields=["cycle", "status"],
+                name="round_cycle_status_idx"
+            ),
+            models.Index(
+                fields=["recipient"],
+                name="round_recipient_idx"
+            ),
+        ]
+
+        ordering = ["cycle", "round_number"]
+
+    def __str__(self):
+        return f"{self.cycle} - Round {self.round_number}"
+
+
+
+class Contribution(models.Model):
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        PARTIALLY_PAID = "PARTIALLY_PAID", "Partially Paid"
+        PAID = "PAID", "Paid"
+        OVERDUE = "OVERDUE", "Overdue"
+        WAIVED = "WAIVED", "Waived"
+
+    id = models.BigAutoField(primary_key=True)
+    round = models.ForeignKey(Round, on_delete=models.PROTECT, related_name="contributions")
+    member = models.ForeignKey(GroupMembership, on_delete=models.PROTECT, related_name="contributions")
+    amount_due = models.DecimalField(max_digits=12, decimal_places=2)
+    amount_paid = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    due_date = models.DateField()
+    status = models.CharField(max_length=30, choices=Status.choices, default=Status.PENDING)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)    
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["round", "member"],
+                name="unique_contribution_per_round_member"
+            ),
+        ]
+
+        indexes = [
+            models.Index(
+                fields=["round", "status"],
+                name="contrib_round_status_idx"
+            ),
+            models.Index(
+                fields=["member", "status"],
+                name="contrib_member_status_idx"
+            ),
+            models.Index(
+                fields=["status", "due_date"],
+                name="contrib_status_due_idx"
+            ),
+        ]
+
+        ordering = ["due_date", "id"]
+
+    @property
+    def balance(self):
+        return self.amount_due - self.amount_paid
+
+    def __str__(self):
+        return f"{self.member} - {self.round} - {self.amount_due}"
