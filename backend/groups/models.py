@@ -203,3 +203,40 @@ class Contribution(models.Model):
 
     def __str__(self):
         return f"{self.member} - {self.round} - {self.amount_due}"
+
+
+class Transaction(models.Model):
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        SUCCESS = "SUCCESS", "Success"
+        FAILED = "FAILED", "Failed"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    id = models.BigAutoField(primary_key=True)
+    contribution = models.ForeignKey(Contribution, on_delete=models.PROTECT, related_name="transactions")
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    phone_number = models.CharField(max_length=20)
+    mpesa_receipt_number = models.CharField(max_length=50, unique=True, null=True, blank=True)
+    checkout_request_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    merchant_request_id = models.CharField(max_length=100, null=True, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    transaction_date = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["status"],
+                name="transaction_status_idx"
+            ),
+            models.Index(
+                fields=["contribution", "status"],
+                name="transaction_contrib_status_idx"
+            ),
+        ]
+
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.phone_number} - {self.amount} - {self.status}"
