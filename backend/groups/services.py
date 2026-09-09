@@ -1,9 +1,9 @@
 from decimal import Decimal
-
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
-
 from .models import Contribution, Transaction
+from .mpesa.stk_push import initiate_stk_push
 
 
 @transaction.atomic
@@ -21,7 +21,6 @@ def process_successful_payment(
     if payment.status == Transaction.Status.SUCCESS:
         return payment
 
-    # Only pending payments can be completed
     if payment.status != Transaction.Status.PENDING:
         raise ValueError(
             "Only pending transactions can be completed."
@@ -29,7 +28,6 @@ def process_successful_payment(
 
     amount = Decimal(str(amount))
 
-    # Make sure the callback amount matches
     if amount != payment.amount:
         raise ValueError(
             "Payment amount does not match transaction amount."
@@ -37,7 +35,6 @@ def process_successful_payment(
 
     contribution = payment.contribution
 
-    # Make sure payment does not exceed the remaining balance
     remaining_balance = (
         contribution.amount_due - contribution.amount_paid
     )
@@ -47,7 +44,6 @@ def process_successful_payment(
             "Payment exceeds the contribution balance."
         )
 
-    # Mark payment as successful
     payment.status = Transaction.Status.SUCCESS
     payment.transaction_date = timezone.now()
     payment.save(
@@ -58,7 +54,6 @@ def process_successful_payment(
         ]
     )
 
-    # Update contribution
     contribution.amount_paid += amount
 
     if contribution.amount_paid >= contribution.amount_due:
@@ -76,6 +71,69 @@ def process_successful_payment(
             "amount_paid",
             "status",
             "paid_at",
+            "updated_at",
+        ]
+    )
+
+    return payment
+
+
+
+@transaction.atomic
+def initiate_contribution_payment(
+    contribution_id,
+    phone_number,
+    callback_url,
+):
+   
+    contribution = (
+        Contribution.objects
+        .select_for_update()
+        .select_related("member__user", "round__cycle__group")
+        .get(id=contribution_id)
+    )
+
+    remaining_balance = (
+        contribution.amount_due - contribution.amount_paid
+    )
+
+    if remaining_balance <= 0:
+        raise ValueError(
+            "This contribution has already been fully paid."
+        )
+
+    payment = Transaction.objects.create(
+        contribution=contribution,
+        amount=remaining_balance,
+        phone_number=phone_number,
+        status=Transaction.Status.PENDING,
+    )
+
+    account_reference = f"CONTRIB{payment.id}"
+
+    transaction_description = "Contribution"
+
+    # Initiate STK Push.
+    response = initiate_stk_push(
+        phone_number=phone_number,
+        amount=payment.amount,
+        account_reference=account_reference,
+        transaction_description=transaction_description,
+        callback_url=callback_url,
+    )
+
+    payment.merchant_request_id = response.get(
+        "MerchantRequestID"
+    )
+
+    payment.checkout_request_id = response.get(
+        "CheckoutRequestID"
+    )
+
+    payment.save(
+        update_fields=[
+            "merchant_request_id",
+            "checkout_request_id",
             "updated_at",
         ]
     )
