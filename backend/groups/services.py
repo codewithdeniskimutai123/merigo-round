@@ -4,7 +4,7 @@ from django.db import transaction
 from django.utils import timezone
 from .models import Contribution, Transaction
 from .mpesa.stk_push import initiate_stk_push
-
+from .mpesa.reference import generate_account_reference, generate_transaction_description
 
 @transaction.atomic
 def process_successful_payment(
@@ -109,9 +109,8 @@ def initiate_contribution_payment(
         status=Transaction.Status.PENDING,
     )
 
-    account_reference = f"CONTRIB{payment.id}"
-
-    transaction_description = "Contribution"
+    account_reference = generate_account_reference(payment.id)
+    transaction_description = generate_transaction_description(payment.id)
 
     # Initiate STK Push.
     response = initiate_stk_push(

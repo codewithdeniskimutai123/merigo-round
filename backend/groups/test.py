@@ -2,11 +2,13 @@ from decimal import Decimal
 
 from django.test import TestCase
 from django.utils import timezone
+import json
 
+from django.urls import reverse
 from users.models import User
 from .models import Group, GroupMembership, Cycle, Round, Contribution, Transaction
 from .services import process_successful_payment
-
+from groups.mpesa.result_codes import get_transaction_status
 
 class PaymentServiceTests(TestCase):
 
@@ -160,7 +162,6 @@ class PaymentServiceTests(TestCase):
             amount="5000.00",
         )
 
-        # Simulate the same callback arriving again
         process_successful_payment(
             transaction_id=payment.id,
             amount="5000.00",
@@ -220,4 +221,230 @@ class PaymentServiceTests(TestCase):
         self.assertEqual(
             self.contribution.amount_paid,
             Decimal("0.00"),
+        )
+
+    def test_result_code_mapping(self):
+        self.assertEqual(
+            get_transaction_status(0),
+            Transaction.Status.SUCCESS,
+        )
+
+        self.assertEqual(
+            get_transaction_status(1032),
+            Transaction.Status.CANCELLED,
+        )
+
+        self.assertEqual(
+            get_transaction_status(1),
+            Transaction.Status.FAILED,
+        )
+
+    def test_mpesa_callback_success(self):
+        payment = self.create_transaction("5000.00")
+
+        payment.checkout_request_id = "ws_CO_TEST123"
+        payment.save(update_fields=["checkout_request_id"])
+
+        payload = {
+            "Body": {
+                "stkCallback": {
+                    "MerchantRequestID": "29115-34620561-1",
+                    "CheckoutRequestID": "ws_CO_TEST123",
+                    "ResultCode": 0,
+                    "ResultDesc": "The service request is processed successfully.",
+                    "CallbackMetadata": {
+                        "Item": [
+                            {
+                                "Name": "Amount",
+                                "Value": 5000,
+                            },
+                            {
+                                "Name": "MpesaReceiptNumber",
+                                "Value": "QK123ABC",
+                            },
+                            {
+                                "Name": "TransactionDate",
+                                "Value": 20260914083000,
+                            },
+                            {
+                                "Name": "PhoneNumber",
+                                "Value": 254712345678,
+                            },
+                        ]
+                    },
+                }
+            }
+        }
+
+        response = self.client.post(
+            reverse("mpesa_callback"),
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        payment.refresh_from_db()
+        self.contribution.refresh_from_db()
+
+        self.assertEqual(
+            payment.status,
+            Transaction.Status.SUCCESS,
+        )
+
+        self.assertEqual(
+            payment.mpesa_receipt_number,
+            "QK123ABC",
+        )
+
+        self.assertEqual(
+            self.contribution.amount_paid,
+            Decimal("5000.00"),
+        )
+
+        self.assertEqual(
+            self.contribution.status,
+            Contribution.Status.PAID,
+        )
+
+    def test_mpesa_callback_duplicate_is_ignored(self):
+        payment = self.create_transaction("5000.00")
+
+        payment.checkout_request_id = "ws_CO_DUPLICATE123"
+        payment.save(update_fields=["checkout_request_id"])
+
+        payload = {
+            "Body": {
+                "stkCallback": {
+                    "MerchantRequestID": "29115-34620561-1",
+                    "CheckoutRequestID": "ws_CO_DUPLICATE123",
+                    "ResultCode": 0,
+                    "ResultDesc": "The service request is processed successfully.",
+                    "CallbackMetadata": {
+                        "Item": [
+                            {
+                                "Name": "Amount",
+                                "Value": 5000,
+                            },
+                            {
+                                "Name": "MpesaReceiptNumber",
+                                "Value": "QK_DUPLICATE123",
+                            },
+                            {
+                                "Name": "TransactionDate",
+                                "Value": 20260914083000,
+                            },
+                            {
+                                "Name": "PhoneNumber",
+                                "Value": 254712345678,
+                            },
+                        ]
+                    },
+                }
+            }
+        }
+
+        response = self.client.post(
+            reverse("mpesa_callback"),
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        payment.refresh_from_db()
+        self.contribution.refresh_from_db()
+
+        self.assertEqual(
+            payment.status,
+            Transaction.Status.SUCCESS,
+        )
+
+        self.assertEqual(
+            self.contribution.amount_paid,
+            Decimal("5000.00"),
+        )
+
+        response = self.client.post(
+            reverse("mpesa_callback"),
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        payment.refresh_from_db()
+        self.contribution.refresh_from_db()
+
+        self.assertEqual(
+            payment.status,
+            Transaction.Status.SUCCESS,
+        )
+
+        self.assertEqual(
+            self.contribution.amount_paid,
+            Decimal("5000.00"),
+        )
+
+    def test_mpesa_callback_wrong_amount_is_rejected(self):
+        payment = self.create_transaction("5000.00")
+
+        payment.checkout_request_id = "ws_CO_WRONG_AMOUNT123"
+        payment.save(update_fields=["checkout_request_id"])
+
+        payload = {
+            "Body": {
+                "stkCallback": {
+                    "MerchantRequestID": "29115-34620561-1",
+                    "CheckoutRequestID": "ws_CO_WRONG_AMOUNT123",
+                    "ResultCode": 0,
+                    "ResultDesc": "The service request is processed successfully.",
+                    "CallbackMetadata": {
+                        "Item": [
+                            {
+                                "Name": "Amount",
+                                "Value": 4000,
+                            },
+                            {
+                                "Name": "MpesaReceiptNumber",
+                                "Value": "QK_WRONG_AMOUNT123",
+                            },
+                            {
+                                "Name": "TransactionDate",
+                                "Value": 20260914083000,
+                            },
+                            {
+                                "Name": "PhoneNumber",
+                                "Value": 254712345678,
+                            },
+                        ]
+                    },
+                }
+            }
+        }
+
+        response = self.client.post(
+            reverse("mpesa_callback"),
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+        payment.refresh_from_db()
+        self.contribution.refresh_from_db()
+
+        self.assertEqual(
+            payment.status,
+            Transaction.Status.PENDING,
+        )
+
+        self.assertEqual(
+            self.contribution.amount_paid,
+            Decimal("0.00"),
+        )
+
+        self.assertEqual(
+            self.contribution.status,
+            Contribution.Status.PENDING,
         )

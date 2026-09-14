@@ -5,7 +5,7 @@ import requests
 from django.conf import settings
 
 from .authentication import get_daraja_access_token
-
+from .phone import normalize_phone_number
 
 def generate_timestamp():
     return datetime.now().strftime("%Y%m%d%H%M%S")
@@ -32,16 +32,13 @@ def initiate_stk_push(
     transaction_description,
     callback_url,
 ):
-    
+    phone_number = normalize_phone_number(phone_number)
     access_token = get_daraja_access_token()
 
-    # Generate current timestamp.
     timestamp = generate_timestamp()
 
-    # Generate M-Pesa password.
     password = generate_password(timestamp)
 
-    # Determine Daraja environment.
     if settings.MPESA_ENVIRONMENT == "production":
         base_url = "https://api.safaricom.co.ke"
     else:
@@ -52,13 +49,11 @@ def initiate_stk_push(
         "/mpesa/stkpush/v1/processrequest"
     )
 
-    # STK Push request headers.
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
     }
 
-    # STK Push request body.
     payload = {
         "BusinessShortCode": settings.MPESA_SHORTCODE,
         "Password": password,
