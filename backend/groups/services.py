@@ -1,6 +1,7 @@
 from decimal import Decimal
 from django.conf import settings
 from django.db import transaction
+from .mpesa.stk_query import query_stk_push
 from django.utils import timezone
 from .models import Contribution, Transaction
 from .mpesa.stk_push import initiate_stk_push
@@ -136,5 +137,64 @@ def initiate_contribution_payment(
             "updated_at",
         ]
     )
+
+    return payment
+
+
+@transaction.atomic
+def reconcile_pending_transaction(transaction_id):
+    payment = (
+        Transaction.objects
+        .select_for_update()
+        .select_related("contribution")
+        .get(id=transaction_id)
+    )
+
+    if payment.status != Transaction.Status.PENDING:
+        return payment
+
+    if not payment.checkout_request_id:
+        raise ValueError(
+            "Transaction does not have a CheckoutRequestID."
+        )
+
+    response = query_stk_push(
+        payment.checkout_request_id
+    )
+
+    result_code = response.get("ResultCode")
+
+    if result_code is None:
+        raise ValueError(
+            "M-Pesa STK Query response does not contain ResultCode."
+        )
+
+    result_code = int(result_code)
+
+    if result_code == 0:
+        process_successful_payment(
+            transaction_id=payment.id,
+            amount=payment.amount,
+        )
+
+    elif result_code == 1032:
+        payment.status = Transaction.Status.CANCELLED
+        payment.save(
+            update_fields=[
+                "status",
+                "updated_at",
+            ]
+        )
+
+    else:
+        payment.status = Transaction.Status.FAILED
+        payment.save(
+            update_fields=[
+                "status",
+                "updated_at",
+            ]
+        )
+
+    payment.refresh_from_db()
 
     return payment

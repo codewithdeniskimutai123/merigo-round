@@ -3,13 +3,15 @@ from decimal import Decimal
 from django.test import TestCase
 from django.utils import timezone
 import json
-
+from unittest.mock import patch
 from django.urls import reverse
 from users.models import User
 from .models import Group, GroupMembership, Cycle, Round, Contribution, Transaction
-from .services import process_successful_payment
 from groups.mpesa.result_codes import get_transaction_status
-
+from .services import (
+    process_successful_payment,
+    reconcile_pending_transaction,
+)
 class PaymentServiceTests(TestCase):
 
     def setUp(self):
@@ -448,3 +450,45 @@ class PaymentServiceTests(TestCase):
             self.contribution.status,
             Contribution.Status.PENDING,
         )
+
+    @patch("groups.services.query_stk_push")
+    def test_reconcile_pending_transaction_success(self, mock_query):
+            
+            payment = self.create_transaction("5000.00")
+
+            payment.checkout_request_id = "ws_CO_RECONCILE123"
+            payment.save(update_fields=["checkout_request_id"])
+
+            mock_query.return_value = {
+                "ResultCode": "0",
+                "ResultDesc": "The service request is processed successfully.",
+            }
+
+            result = reconcile_pending_transaction(payment.id)
+
+            payment.refresh_from_db()
+            self.contribution.refresh_from_db()
+
+            self.assertEqual(
+                result.status,
+                Transaction.Status.SUCCESS,
+            )
+
+            self.assertEqual(
+                payment.status,
+                Transaction.Status.SUCCESS,
+            )
+
+            self.assertEqual(
+                self.contribution.amount_paid,
+                Decimal("5000.00"),
+            )
+
+            self.assertEqual(
+                self.contribution.status,
+                Contribution.Status.PAID,
+            )
+
+            mock_query.assert_called_once_with(
+                "ws_CO_RECONCILE123"
+            )
