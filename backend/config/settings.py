@@ -12,7 +12,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-
+from celery.schedules import crontab
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -62,6 +62,7 @@ INSTALLED_APPS = [
     "corsheaders",
     'users',
     'groups',
+    'django_celery_beat',
 ]
 
 MIDDLEWARE = [
@@ -163,5 +164,19 @@ MAILERS = {
         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
     },
 }
+
+
+
+CELERY_BEAT_SCHEDULE = {
+    "reconcile-pending-mpesa-transactions": {
+        "task": "groups.tasks.reconcile_pending_transactions",
+        "schedule": crontab(minute="*/5"),
+    },
+}
+
+
+
 CORS_ALLOW_ALL_ORIGINS = True
 AUTH_USER_MODEL = 'users.User'
+
+
