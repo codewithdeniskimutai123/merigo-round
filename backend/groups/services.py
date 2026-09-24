@@ -158,9 +158,23 @@ def reconcile_pending_transaction(transaction_id):
             "Transaction does not have a CheckoutRequestID."
         )
 
-    response = query_stk_push(
-        payment.checkout_request_id
-    )
+    try:
+        response = query_stk_push(
+            payment.checkout_request_id
+        )
+    except RuntimeError as exc:
+        if "The transaction does not Exist" in str(exc):
+            payment.status = Transaction.Status.FAILED
+            payment.save(
+                update_fields=[
+                    "status",
+                    "updated_at",
+                ]
+            )
+
+            return payment
+
+        raise
 
     result_code = response.get("ResultCode")
 
