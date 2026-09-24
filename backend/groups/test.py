@@ -492,3 +492,16 @@ class PaymentServiceTests(TestCase):
             mock_query.assert_called_once_with(
                 "ws_CO_RECONCILE123"
             )
+
+    @patch("groups.tasks.reconcile_pending_transaction")
+    def test_reconcile_pending_transactions_task(
+        self,
+        mock_reconcile,
+    ):
+        payment = self.create_transaction("5000.00")
+
+        from groups.tasks import reconcile_pending_transactions
+
+        reconcile_pending_transactions()
+
+        mock_reconcile.assert_called_once_with(payment.id)
