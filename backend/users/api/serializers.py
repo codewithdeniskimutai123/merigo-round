@@ -46,6 +46,36 @@ class UserSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "username",
             "created_at",
             "updated_at",
         ]
+
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    current_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField( write_only=True, min_length=8)
+    confirm_password = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        if attrs["new_password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError(
+                {
+                    "confirm_password": "Passwords do not match."
+                }
+            )
+
+        if not self.context["request"].user.check_password(
+            attrs["current_password"]
+        ):
+            raise serializers.ValidationError(
+                {
+                    "current_password": "Current password is incorrect."
+                }
+            )
+
+        return attrs
+
+class ForgotPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField()
