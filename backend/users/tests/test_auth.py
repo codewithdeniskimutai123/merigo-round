@@ -246,3 +246,222 @@ class AuthenticationTests(APITestCase):
             response.status_code,
             status.HTTP_400_BAD_REQUEST,
         )
+
+    def test_authenticated_user_can_update_profile(self):
+        user = User.objects.create_user(
+            username=self.user_data["username"],
+            email=self.user_data["email"],
+            phone_number=self.user_data["phone_number"],
+            password=self.user_data["password"],
+        )
+
+        self.client.force_authenticate(user=user)
+
+        response = self.client.patch(
+            "/api/auth/me/",
+            {
+                "phone_number": "0711111111",
+                "email": "updated@example.com",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        user.refresh_from_db()
+
+        self.assertEqual(
+            user.phone_number,
+            "0711111111",
+        )
+
+        self.assertEqual(
+            user.email,
+            "updated@example.com",
+        )
+
+    def test_user_cannot_update_protected_profile_fields(self):
+        user = User.objects.create_user(
+            username=self.user_data["username"],
+            email=self.user_data["email"],
+            phone_number=self.user_data["phone_number"],
+            password=self.user_data["password"],
+        )
+
+        original_id = user.id
+
+        self.client.force_authenticate(user=user)
+
+        response = self.client.patch(
+            "/api/auth/me/",
+            {
+                "username": "hackername",
+                "id": 999,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        user.refresh_from_db()
+
+        self.assertEqual(
+            user.username,
+            "testauth",
+        )
+
+        self.assertEqual(
+            user.id,
+            original_id,
+        )
+
+    def test_old_access_token_is_invalid_after_password_change(self):
+        user = get_user_model().objects.create_user(
+            username="passwordtest",
+            email="passwordtest@example.com",
+            phone_number="0712345678",
+            password="OldPassword123",
+        )
+
+        login_response = self.client.post(
+            "/api/auth/login/",
+            {
+                "username": "passwordtest",
+                "password": "OldPassword123",
+            },
+            format="json",
+        )
+
+        access_token = login_response.data["access"]
+
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {access_token}"
+        )
+
+        response = self.client.post(
+            "/api/auth/change-password/",
+            {
+                "current_password": "OldPassword123",
+                "new_password": "NewPassword123",
+                "confirm_password": "NewPassword123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        response = self.client.get("/api/auth/me/")
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_old_refresh_token_is_invalid_after_password_change(self):
+        user = get_user_model().objects.create_user(
+            username="refresh_test",
+            email="refresh_test@example.com",
+            phone_number="0723456789",
+            password="OldPassword123",
+        )
+
+        login_response = self.client.post(
+            "/api/auth/login/",
+            {
+                "username": "refresh_test",
+                "password": "OldPassword123",
+            },
+            format="json",
+        )
+
+        refresh_token = login_response.data["refresh"]
+
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {login_response.data['access']}"
+        )
+
+        response = self.client.post(
+            "/api/auth/change-password/",
+            {
+                "current_password": "OldPassword123",
+                "new_password": "NewPassword123",
+                "confirm_password": "NewPassword123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        response = self.client.post(
+            "/api/auth/refresh/",
+            {
+                "refresh": refresh_token,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_change_password_with_wrong_current_password(self):
+        user = get_user_model().objects.create_user(
+            username="wrong_current",
+            email="wrong_current@example.com",
+            phone_number="0734567890",
+            password="OldPassword123",
+        )
+
+        self.client.force_authenticate(user=user)
+
+        response = self.client.post(
+            "/api/auth/change-password/",
+            {
+                "current_password": "WrongPassword123",
+                "new_password": "NewPassword123",
+                "confirm_password": "NewPassword123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("current_password", response.data)
+
+
+    def test_change_password_with_mismatched_passwords(self):
+        user = get_user_model().objects.create_user(
+            username="mismatch",
+            email="mismatch@example.com",
+            phone_number="0745678901",
+            password="OldPassword123",
+        )
+
+        self.client.force_authenticate(user=user)
+
+        response = self.client.post(
+            "/api/auth/change-password/",
+            {
+                "current_password": "OldPassword123",
+                "new_password": "NewPassword123",
+                "confirm_password": "DifferentPassword123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("confirm_password", response.data)
+
+
+    def test_unauthenticated_user_cannot_change_password(self):
+        response = self.client.post(
+            "/api/auth/change-password/",
+            {
+                "current_password": "OldPassword123",
+                "new_password": "NewPassword123",
+                "confirm_password": "NewPassword123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 401)
