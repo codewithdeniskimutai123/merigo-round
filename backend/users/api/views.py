@@ -2,7 +2,6 @@ from rest_framework.decorators import (
     api_view,
     permission_classes,
 )
-from django.core.mail import send_mail
 from django.conf import settings
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -10,13 +9,16 @@ from rest_framework import status
 from .serializers import (UserRegistrationSerializer, 
                           UserSerializer, 
                           ChangePasswordSerializer,
-                          ForgotPasswordSerializer)
+                          ForgotPasswordSerializer,
+                          ResetPasswordSerializer,)
 from django.utils import timezone
 from users.services import invalidate_user_refresh_tokens
 from django.contrib.auth import get_user_model
 from users.services import (
     invalidate_user_refresh_tokens,
     create_password_reset_token,
+    send_password_reset_email,
+    reset_password,
 )
 
 @api_view(["POST"])
@@ -124,22 +126,10 @@ def forgot_password(request):
             f"/reset-password?token={raw_token}"
         )
 
-        send_mail(
-            subject="Reset your Merigo Round password",
-            message=(
-                "You requested a password reset for your "
-                "Merigo Round account.\n\n"
-                "Click the link below to reset your password:\n\n"
-                f"{reset_link}\n\n"
-                "This link expires in 15 minutes and can "
-                "only be used once.\n\n"
-                "If you did not request this password reset, "
-                "you can safely ignore this email."
-            ),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=False,
-        )
+        send_password_reset_email(
+                    user,
+                    reset_link,
+                )
 
     return Response(
         {
@@ -147,6 +137,40 @@ def forgot_password(request):
                 "If an account with that email exists, "
                 "a password reset link has been sent."
             )
+        },
+        status=status.HTTP_200_OK,
+    )
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def reset_password_view(request):
+    serializer = ResetPasswordSerializer(
+        data=request.data
+    )
+
+    if not serializer.is_valid():
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        reset_password(
+            raw_token=serializer.validated_data["token"],
+            new_password=serializer.validated_data["new_password"],
+        )
+
+    except ValueError as exc:
+        return Response(
+            {
+                "detail": str(exc)
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    return Response(
+        {
+            "detail": "Password has been reset successfully."
         },
         status=status.HTTP_200_OK,
     )
