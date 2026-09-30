@@ -48,7 +48,16 @@ ALLOWED_HOSTS = [
     "sprint-siren-tattling.ngrok-free.dev",
 ]
 
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+DEFAULT_FROM_EMAIL = os.getenv(
+    "DEFAULT_FROM_EMAIL",
+    "onboarding@resend.dev",
+)
 
+FRONTEND_URL = os.getenv(
+    "FRONTEND_URL",
+    "http://localhost:5173",
+)
 # Application definition
 
 INSTALLED_APPS = [
