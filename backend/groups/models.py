@@ -67,6 +67,17 @@ class GroupMembership(models.Model):
             )
         ]
 
+        indexes = [
+            models.Index(
+                fields=["group", "status"],
+                name="membership_group_status_idx"
+            ),
+            models.Index(
+                fields=["user", "status"],
+                name="membership_user_status_idx"
+            ),
+        ]
+
     def __str__(self):
         return f"{self.user} - {self.group}"
 
