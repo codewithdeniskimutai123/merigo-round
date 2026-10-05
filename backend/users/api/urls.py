@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .views import register, me, change_password, forgot_password, reset_password_view
+from .views import register, me, change_password, forgot_password, reset_password_view, google_oauth
 from rest_framework_simplejwt.views import (TokenObtainPairView,
     TokenRefreshView,
 )
@@ -13,5 +13,6 @@ urlpatterns = [
     path("change-password/", change_password, name="change_password"),
     path("forgot-password/", forgot_password, name="forgot_password"),
     path("reset-password/", reset_password_view, name="reset_password"),
+    path("google/", google_oauth, name="google-oauth"),
 
 ]
