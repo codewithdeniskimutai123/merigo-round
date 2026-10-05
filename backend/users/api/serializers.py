@@ -96,3 +96,11 @@ class ResetPasswordSerializer(serializers.Serializer):
             )
 
         return attrs
+
+
+class GoogleOAuthSerializer(serializers.Serializer):
+    token = serializers.CharField(required=True, 
+                                  allow_blank=False, 
+                                  error_messages={"required":"Google auth token is strictly required."})
+
+    
