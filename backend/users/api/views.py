@@ -1,3 +1,8 @@
+import logging
+from django.contrib.auth import get_user_model
+from django.conf import settings
+from django.db import transaction
+from django.utils.crypto import get_random_string
 from rest_framework.decorators import (
     api_view,
     permission_classes,
@@ -6,11 +11,17 @@ from django.conf import settings
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token
+
 from .serializers import (UserRegistrationSerializer, 
                           UserSerializer, 
                           ChangePasswordSerializer,
                           ForgotPasswordSerializer,
-                          ResetPasswordSerializer,)
+                          ResetPasswordSerializer,
+                          GoogleOAuthSerializer)
 from django.utils import timezone
 from users.services import invalidate_user_refresh_tokens
 from django.contrib.auth import get_user_model
@@ -174,3 +185,85 @@ def reset_password_view(request):
         },
         status=status.HTTP_200_OK,
     )
+
+logger = logging.getLogger(__name__)
+User = get_user_model()
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def google_oauth(request):
+    serializer = GoogleOAuthSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    raw_token = serializer.validated_data["token"]
+
+    try:
+        id_info = id_token.verify_oauth2_token(
+            raw_token,
+            google_requests.Request(),
+            settings.GOOGLE_CLIENT_ID
+        )
+
+        email = id_info.get("email")
+        first_name = id_info.get("given_name", "")
+        last_name = id_info.get("family_name", "")
+
+        if not email:
+            return Response(
+                {"error": "Google account payload is missing a primary email address."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        with transaction.atomic():
+            user = User.objects.filter(email=email).first()
+            if user is None:
+                base_username = email.split("@")[0]
+                username = base_username
+                
+                counter = 1
+                while User.objects.filter(username=username).exists():
+                    username = f"{base_username}{counter}"
+                    counter += 1
+
+                user = User.objects.create(
+                    username=username,
+                    email=email,
+                    first_name=first_name,
+                    last_name=last_name,
+                )
+                user.set_unusable_password()
+                user.save()
+                logger.info("New profile registered via Google OAuth: %s", email)
+            else:
+                logger.info("Existing profile authenticated via Google OAuth: %s", email)
+
+        refresh = RefreshToken.for_user(user)
+
+        return Response({
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "username": user.username,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+            }
+        }, status=status.HTTP_200_OK)
+
+    except ValueError:
+        logger.warning("Failed Google OAuth handshake attempt: Invalid token signature.")
+        return Response(
+            {"error": "Invalid or expired Google authentication token signature."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    except Exception as exc:
+        logger.error("System-level Google OAuth failure: %s", str(exc))
+        return Response(
+            {"error": "Authentication server communication failure. Please try again later."},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
