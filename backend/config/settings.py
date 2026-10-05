@@ -34,6 +34,8 @@ CACHES = {
     }
 }
 
+#google oauth
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 
 # M-Pesa Daraja
 MPESA_CONSUMER_KEY = os.getenv("MPESA_CONSUMER_KEY")
