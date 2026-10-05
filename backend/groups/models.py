@@ -45,6 +45,7 @@ class GroupMembership(models.Model):
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"
         ACTIVE = "ACTIVE", "Active"
+        LEAVE_REQUESTED = "LEAVE_REQUESTED", "Leave Requested"
         LEFT = "LEFT", "Left"
         REMOVED = "REMOVED", "Removed"
         SUSPENDED = "SUSPENDED", "Suspended"
@@ -113,6 +114,29 @@ class Cycle(models.Model):
     def __str__(self):
         return f"{self.group.name} - Cycle {self.cycle_number}"
 
+class CycleMembership(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    cycle = models.ForeignKey(Cycle, on_delete=models.PROTECT, related_name="cycle_memberships")
+    membership = models.ForeignKey(GroupMembership, on_delete=models.PROTECT, related_name="cycle_memberships")
+    position = models.PositiveIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["cycle", "membership"],
+                name="unique_cycle_membership"
+            ),
+            models.UniqueConstraint(
+                fields=["cycle", "position"],
+                name="unique_cycle_position"
+            ),
+        ]
+
+        ordering = ["cycle", "position"]
+
+    def __str__(self):
+        return f"{self.cycle} - {self.membership} - Position {self.position}"
 
 
 class Round(models.Model):
