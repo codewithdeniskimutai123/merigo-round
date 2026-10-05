@@ -1043,3 +1043,72 @@ class AuthenticationTests(APITestCase):
             response.status_code,
             status.HTTP_401_UNAUTHORIZED,
         )
+
+    @patch("users.api.views.id_token.verify_oauth2_token")
+    def test_google_oauth_registers_new_user_successfully(self, mock_verify):
+        mock_verify.return_value = {
+            "email": "denis.kimutai@gmail.com",
+            "given_name": "Denis",
+            "family_name": "Kimutai",
+            "iss": "://google.com",
+            "sub": "google-unique-sub-12345",
+        }
+
+        response = self.client.post(
+            "/api/auth/google/",
+            {"token": "mock_raw_frontend_token_xyz"},
+            format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("access", response.data)
+        self.assertIn("refresh", response.data)
+        self.assertEqual(response.data["user"]["email"], "denis.kimutai@gmail.com")
+
+        self.assertTrue(User.objects.filter(email="denis.kimutai@gmail.com").exists())
+        
+        new_user = User.objects.get(email="denis.kimutai@gmail.com")
+        self.assertFalse(new_user.has_usable_password())
+
+    @patch("users.api.views.id_token.verify_oauth2_token")
+    def test_google_oauth_logs_in_existing_user_successfully(self, mock_verify):
+        """Verifies that a returning Google user is authenticated without spawning duplicate accounts."""
+        existing_user = User.objects.create_user(
+            username="denis.kimutai",
+            email="denis.kimutai@gmail.com",
+            first_name="Denis",
+            last_name="Kimutai"
+        )
+        existing_user.set_unusable_password()
+        existing_user.save()
+
+        mock_verify.return_value = {
+            "email": "denis.kimutai@gmail.com",
+            "given_name": "Denis",
+            "family_name": "Kimutai",
+            "iss": "://google.com",
+            "sub": "google-unique-sub-12345",
+        }
+
+        response = self.client.post(
+            "/api/auth/google/",
+            {"token": "another_mock_token_abc"},
+            format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(User.objects.filter(email="denis.kimutai@gmail.com").count(), 1)
+
+    @patch("users.api.views.id_token.verify_oauth2_token")
+    def test_google_oauth_rejects_invalid_or_expired_token_signature(self, mock_verify):
+        """Verifies that a tampered or bad Google token signature gets caught by the firewall block."""
+        mock_verify.side_effect = ValueError("Invalid token signature")
+
+        response = self.client.post(
+            "/api/auth/google/",
+            {"token": "malicious_tampered_token_string"},
+            format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error"], "Invalid or expired Google authentication token signature.")
