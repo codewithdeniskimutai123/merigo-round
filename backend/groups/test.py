@@ -6,12 +6,16 @@ import json
 from unittest.mock import patch
 from django.urls import reverse
 from users.models import User
-from .models import Group, GroupMembership, Cycle, Round, Contribution, Transaction
+from .models import Group, GroupMembership, Cycle, Round, Contribution, Transaction, CycleMembership
 from groups.mpesa.result_codes import get_transaction_status
 from .services import (
     process_successful_payment,
     reconcile_pending_transaction,
 )
+from .group_services import (create_cycle_contributions, 
+                             can_member_request_leave, 
+                             request_member_leave, 
+                             approve_member_leave)
 class PaymentServiceTests(TestCase):
 
     def setUp(self):
@@ -505,3 +509,415 @@ class PaymentServiceTests(TestCase):
         reconcile_pending_transactions()
 
         mock_reconcile.assert_called_once_with(payment.id)
+
+class ContributionServiceTests(TestCase):
+
+    def setUp(self):
+        self.users = []
+
+        for number in range(4):
+            user = User.objects.create_user(
+                username=f"member{number}",
+                phone_number=f"25471234567{number}",
+                password="testpassword123",
+            )
+            self.users.append(user)
+
+        self.group = Group.objects.create(
+            name="Test Women Group",
+            description="Test group",
+            created_by=self.users[0],
+            contribution_amount=Decimal("5000.00"),
+            frequency=Group.Frequency.MONTHLY,
+            start_date=timezone.now().date(),
+            max_members=20,
+            status=Group.Status.ACTIVE,
+        )
+
+        self.memberships = []
+
+        for user in self.users:
+            membership = GroupMembership.objects.create(
+                user=user,
+                group=self.group,
+                role=GroupMembership.Role.MEMBER,
+                status=GroupMembership.Status.ACTIVE,
+                joined_at=timezone.now(),
+            )
+            self.memberships.append(membership)
+
+        self.cycle = Cycle.objects.create(
+            group=self.group,
+            name="Cycle 1",
+            cycle_number=1,
+            start_date=timezone.now().date(),
+            status=Cycle.Status.DRAFT,
+            order_status=Cycle.OrderStatus.LOCKED,
+        )
+
+        self.cycle_memberships = []
+
+        for position, membership in enumerate(self.memberships, start=1):
+            cycle_membership = CycleMembership.objects.create(
+                cycle=self.cycle,
+                membership=membership,
+                position=position,
+            )
+            self.cycle_memberships.append(cycle_membership)
+
+        for position, cycle_membership in enumerate(
+            self.cycle_memberships,
+            start=1,
+        ):
+            Round.objects.create(
+                cycle=self.cycle,
+                round_number=position,
+                recipient=cycle_membership.membership,
+                start_date=self.cycle.start_date,
+                due_date=self.cycle.start_date,
+                expected_payout_amount=Decimal("20000.00"),
+                status=Round.Status.UPCOMING,
+            )
+    def test_create_cycle_contributions_creates_all_contributions(self):
+        create_cycle_contributions(cycle=self.cycle)
+
+        contributions = Contribution.objects.filter(
+            round__cycle=self.cycle
+        )
+
+        self.assertEqual(contributions.count(), 16)
+
+    def test_create_cycle_contributions_sets_correct_values(self):
+        create_cycle_contributions(cycle=self.cycle)
+
+        contributions = Contribution.objects.filter(
+            round__cycle=self.cycle
+        )
+
+        for contribution in contributions:
+            self.assertEqual(
+                contribution.amount_due,
+                Decimal("5000.00"),
+            )
+            self.assertEqual(
+                contribution.amount_paid,
+                Decimal("0.00"),
+            )
+            self.assertEqual(
+                contribution.status,
+                Contribution.Status.PENDING,
+            )
+            self.assertEqual(
+                contribution.due_date,
+                contribution.round.due_date,
+            )
+
+class LeaveEligibilityTests(TestCase):
+
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username="admin",
+            email="admin@example.com",
+            password="Password123",
+            phone_number="0711007001"
+        )
+
+        self.member = User.objects.create_user(
+            username="member",
+            email="member@example.com",
+            password="Password123",
+            phone_number="0711907001"
+        )
+
+        self.group = Group.objects.create(
+            name="Test Women Group",
+            created_by=self.admin,
+            contribution_amount=Decimal("5000.00"),
+            frequency=Group.Frequency.MONTHLY,
+            start_date=timezone.now().date(),
+            max_members=20,
+            status=Group.Status.ACTIVE,
+        )
+
+        self.membership = GroupMembership.objects.create(
+            user=self.member,
+            group=self.group,
+            role=GroupMembership.Role.MEMBER,
+            status=GroupMembership.Status.ACTIVE,
+            joined_at=timezone.now(),
+        )
+
+        self.cycle = Cycle.objects.create(
+            group=self.group,
+            name="Cycle 1",
+            cycle_number=1,
+            start_date=timezone.now().date(),
+            status=Cycle.Status.ACTIVE,
+        )
+
+    def test_member_can_leave_before_first_payout(self):
+        result = can_member_request_leave(
+            membership=self.membership
+        )
+
+        self.assertTrue(result)
+
+    def test_member_cannot_leave_after_payout(self):
+        Round.objects.create(
+            cycle=self.cycle,
+            round_number=1,
+            recipient=self.membership,
+            start_date=timezone.now().date(),
+            due_date=timezone.now().date(),
+            status=Round.Status.COMPLETED,
+            expected_payout_amount=Decimal("10000.00"),
+        )
+
+        result = can_member_request_leave(
+            membership=self.membership
+        )
+
+        self.assertFalse(result)
+
+    def test_member_can_leave_after_cycle_completed(self):
+        self.cycle.status = Cycle.Status.COMPLETED
+        self.cycle.save()
+
+        result = can_member_request_leave(
+            membership=self.membership
+        )
+
+        self.assertTrue(result)
+
+    def test_active_member_can_request_leave(self):
+        membership = request_member_leave(
+            membership=self.membership
+        )
+
+        self.assertEqual(
+            membership.status,
+            GroupMembership.Status.LEAVE_REQUESTED
+        )
+
+    def test_member_cannot_request_leave_after_payout(self):
+        Round.objects.create(
+            cycle=self.cycle,
+            round_number=1,
+            recipient=self.membership,
+            start_date=timezone.now().date(),
+            due_date=timezone.now().date(),
+            status=Round.Status.COMPLETED,
+            expected_payout_amount=Decimal("10000.00"),
+        )
+
+        with self.assertRaises(ValueError):
+            request_member_leave(
+                membership=self.membership
+            )
+
+        self.membership.refresh_from_db()
+
+        self.assertEqual(
+            self.membership.status,
+            GroupMembership.Status.ACTIVE
+        )
+
+class MemberLeaveApprovalTests(TestCase):
+
+    def setUp(self):
+        self.users = []
+
+        for number in range(5):
+            user = User.objects.create_user(
+                username=f"member{number}",
+                phone_number=f"25471234567{number}",
+                password="testpassword123",
+            )
+            self.users.append(user)
+
+        self.group = Group.objects.create(
+            name="Test Women Group",
+            created_by=self.users[0],
+            contribution_amount=Decimal("5000.00"),
+            frequency=Group.Frequency.MONTHLY,
+            start_date=timezone.now().date(),
+            max_members=20,
+            status=Group.Status.ACTIVE,
+        )
+
+        self.memberships = []
+
+        for user in self.users:
+            membership = GroupMembership.objects.create(
+                user=user,
+                group=self.group,
+                role=GroupMembership.Role.MEMBER,
+                status=GroupMembership.Status.ACTIVE,
+                joined_at=timezone.now(),
+            )
+            self.memberships.append(membership)
+
+        self.cycle = Cycle.objects.create(
+            group=self.group,
+            name="Cycle 1",
+            cycle_number=1,
+            start_date=timezone.now().date(),
+            status=Cycle.Status.ACTIVE,
+            order_status=Cycle.OrderStatus.LOCKED,
+        )
+
+        self.cycle_memberships = []
+
+        for position, membership in enumerate(
+            self.memberships,
+            start=1,
+        ):
+            cycle_membership = CycleMembership.objects.create(
+                cycle=self.cycle,
+                membership=membership,
+                position=position,
+            )
+
+            self.cycle_memberships.append(
+                cycle_membership
+            )
+
+        for position, cycle_membership in enumerate(
+            self.cycle_memberships,
+            start=1,
+        ):
+            Round.objects.create(
+                cycle=self.cycle,
+                round_number=position,
+                recipient=cycle_membership.membership,
+                start_date=self.cycle.start_date,
+                due_date=self.cycle.start_date,
+                expected_payout_amount=Decimal("25000.00"),
+                status=Round.Status.UPCOMING,
+            )
+
+    def test_approve_leave_removes_member_from_cycle(self):
+        membership = self.memberships[2]
+
+        membership.status = GroupMembership.Status.LEAVE_REQUESTED
+        membership.save(update_fields=["status"])
+
+        approve_member_leave(
+            membership=membership
+        )
+
+        membership.refresh_from_db()
+
+        self.assertEqual(
+            membership.status,
+            GroupMembership.Status.LEFT,
+        )
+
+        self.assertFalse(
+            CycleMembership.objects.filter(
+                cycle=self.cycle,
+                membership=membership,
+            ).exists()
+        )
+
+    def test_approve_leave_renumbers_positions(self):
+        membership = self.memberships[2]
+
+        membership.status = GroupMembership.Status.LEAVE_REQUESTED
+        membership.save(update_fields=["status"])
+
+        approve_member_leave(
+            membership=membership
+        )
+
+        positions = list(
+            CycleMembership.objects.filter(
+                cycle=self.cycle
+            ).order_by("position").values_list(
+                "position",
+                flat=True,
+            )
+        )
+
+        self.assertEqual(
+            positions,
+            [1, 2, 3, 4],
+        )
+
+    def test_approve_leave_rebuilds_rounds(self):
+        membership = self.memberships[2]
+
+        membership.status = GroupMembership.Status.LEAVE_REQUESTED
+        membership.save(update_fields=["status"])
+
+        approve_member_leave(
+            membership=membership
+        )
+
+        rounds = Round.objects.filter(
+            cycle=self.cycle
+        ).order_by("round_number")
+
+        self.assertEqual(
+            rounds.count(),
+            4,
+        )
+
+        round_numbers = list(
+            rounds.values_list(
+                "round_number",
+                flat=True,
+            )
+        )
+
+        self.assertEqual(
+            round_numbers,
+            [1, 2, 3, 4],
+        )
+
+    def test_approve_leave_recalculates_payout_amount(self):
+        membership = self.memberships[2]
+
+        membership.status = GroupMembership.Status.LEAVE_REQUESTED
+        membership.save(update_fields=["status"])
+
+        approve_member_leave(
+            membership=membership
+        )
+
+        rounds = Round.objects.filter(
+            cycle=self.cycle
+        )
+
+        for round in rounds:
+            self.assertEqual(
+                round.expected_payout_amount,
+                Decimal("20000.00"),
+            )
+
+    def test_member_cannot_leave_after_contributions_exist(self):
+        membership = self.memberships[2]
+
+        membership.status = GroupMembership.Status.LEAVE_REQUESTED
+        membership.save(update_fields=["status"])
+
+        Contribution.objects.create(
+            round=self.cycle.rounds.first(),
+            member=self.memberships[0],
+            amount_due=Decimal("5000.00"),
+            amount_paid=Decimal("0.00"),
+            due_date=self.cycle.start_date,
+            status=Contribution.Status.PENDING,
+        )
+
+        with self.assertRaises(ValueError):
+            approve_member_leave(
+                membership=membership
+            )
+
+        membership.refresh_from_db()
+
+        self.assertEqual(
+            membership.status,
+            GroupMembership.Status.LEAVE_REQUESTED,
+        )
