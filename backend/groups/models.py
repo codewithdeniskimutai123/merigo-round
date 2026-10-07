@@ -18,10 +18,8 @@ class Group(models.Model):
 
     id = models.BigAutoField(primary_key=True)
     name = models.CharField(max_length=150)
-
     description = models.TextField(blank=True, null=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.PROTECT,related_name="created_groups")
-
     contribution_amount = models.DecimalField(max_digits=12, decimal_places=2)
     frequency = models.CharField( max_length=20, choices=Frequency.choices)
     start_date = models.DateField()
@@ -92,6 +90,11 @@ class Cycle(models.Model):
         COMPLETED = "COMPLETED", "Completed"
         CANCELLED = "CANCELLED", "Cancelled"
 
+    class OrderStatus(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        OPEN = "OPEN", "Open"
+        LOCKED = "LOCKED", "Locked"
+
     id = models.BigAutoField(primary_key=True)
     group = models.ForeignKey(Group, on_delete=models.PROTECT, related_name="cycles")
     name = models.CharField(max_length=150)
@@ -99,6 +102,8 @@ class Cycle(models.Model):
     start_date = models.DateField()
     end_date = models.DateField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    swap_deadline = models.DateTimeField(null=True, blank=True)
+    order_status = models.CharField(max_length=20, choices=OrderStatus.choices, default=OrderStatus.PENDING)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -137,6 +142,32 @@ class CycleMembership(models.Model):
 
     def __str__(self):
         return f"{self.cycle} - {self.membership} - Position {self.position}"
+
+class CycleSwapRequest(models.Model):
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        ACCEPTED = "ACCEPTED", "Accepted"
+        REJECTED = "REJECTED", "Rejected"
+        EXPIRED = "EXPIRED", "Expired"
+
+    id = models.BigAutoField(primary_key=True)
+    cycle = models.ForeignKey(Cycle, on_delete=models.PROTECT, related_name="swap_requests")
+    requester = models.ForeignKey(CycleMembership, on_delete=models.PROTECT, related_name="swap_requests_sent")
+    target = models.ForeignKey(CycleMembership, on_delete=models.PROTECT, related_name="swap_requests_received")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    requested_at = models.DateTimeField(auto_now_add=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["cycle", "status"], name="swap_cycle_status_idx"),
+            models.Index(fields=["requester", "status"], name="swap_requester_status_idx"),
+            models.Index(fields=["target", "status"], name="swap_target_status_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.requester} → {self.target} ({self.status})"
 
 
 class Round(models.Model):
