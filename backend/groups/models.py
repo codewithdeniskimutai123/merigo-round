@@ -306,3 +306,42 @@ class Transaction(models.Model):
 
     def __str__(self):
         return f"{self.phone_number} - {self.amount} - {self.status}"
+
+
+
+class Payout(models.Model):
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        SUCCESS = "SUCCESS", "Successful"
+        FAILED = "FAILED", "Failed"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    id = models.BigAutoField(primary_key=True)
+
+    round = models.ForeignKey(Round, on_delete=models.PROTECT, related_name="payouts")
+    recipient = models.ForeignKey(GroupMembership, on_delete=models.PROTECT, related_name="payouts")
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    phone_number = models.CharField(max_length=20)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    conversation_id = models.CharField(max_length=100, null=True, blank=True)
+    originator_conversation_id = models.CharField(max_length=19, unique=True, null=True, blank=True)
+    transaction_reference = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    failure_reason = models.TextField(blank=True)
+    requested_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["round"],
+                condition=models.Q(status="SUCCESS"),
+                name="unique_successful_payout_per_round",
+            )
+        ]
+        ordering = ["-requested_at"]
+
+    def __str__(self):
+        return f"Payout for {self.round} - {self.amount} - {self.status}"
