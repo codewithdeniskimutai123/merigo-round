@@ -2,7 +2,7 @@ from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
 from dateutil.relativedelta import relativedelta
-from .models import (Group, 
+from .models import (Group, Payout,
                      GroupMembership, 
                      Cycle, CycleMembership, 
                      CycleSwapRequest, Round, 
@@ -413,6 +413,272 @@ def create_cycle_rounds(*, cycle):
         )
 
     return cycle.rounds.all()
+
+
+@transaction.atomic
+def activate_cycle(*, cycle):
+    today = timezone.localdate()
+
+    if cycle.status != Cycle.Status.DRAFT:
+        raise ValueError(
+            "Only draft cycles can be activated."
+        )
+
+    if cycle.order_status != Cycle.OrderStatus.LOCKED:
+        raise ValueError(
+            "The cycle order must be finalized before activation."
+        )
+
+    if cycle.start_date > today:
+        raise ValueError(
+            "The cycle cannot activate before its start date."
+        )
+
+    rounds = list(
+        cycle.rounds.order_by("round_number")
+    )
+
+    if not rounds:
+        raise ValueError(
+            "Rounds must be created before cycle activation."
+        )
+
+    first_round = rounds[0]
+
+    if first_round.status != Round.Status.UPCOMING:
+        raise ValueError(
+            "The first round must be upcoming before activation."
+        )
+
+    cycle.status = Cycle.Status.ACTIVE
+    cycle.save(update_fields=["status", "updated_at"])
+
+    first_round.status = Round.Status.ACTIVE
+    first_round.save(update_fields=["status", "updated_at"])
+
+    return cycle
+
+
+
+@transaction.atomic
+def activate_next_round(*, cycle):
+    today = timezone.localdate()
+
+    if cycle.status != Cycle.Status.ACTIVE:
+        raise ValueError(
+            "Only active cycles can activate their next round."
+        )
+
+    rounds = list(
+        cycle.rounds.order_by("round_number")
+    )
+
+    if not rounds:
+        raise ValueError(
+            "The cycle has no rounds."
+        )
+
+    active_rounds = [
+        round_obj
+        for round_obj in rounds
+        if round_obj.status == Round.Status.ACTIVE
+    ]
+
+    if active_rounds:
+        raise ValueError(
+            "The current round must be completed before activating another round."
+        )
+
+    completed_round_numbers = {
+        round_obj.round_number
+        for round_obj in rounds
+        if round_obj.status == Round.Status.COMPLETED
+    }
+
+    next_round = next(
+        (
+            round_obj
+            for round_obj in rounds
+            if round_obj.status == Round.Status.UPCOMING
+        ),
+        None,
+    )
+
+    if next_round is None:
+        if all(
+            round_obj.status == Round.Status.COMPLETED
+            for round_obj in rounds
+        ):
+            cycle.status = Cycle.Status.COMPLETED
+            cycle.save(update_fields=["status", "updated_at"])
+            return None
+
+        raise ValueError(
+            "No upcoming round is available to activate."
+        )
+
+    if next_round.start_date > today:
+        raise ValueError(
+            "The next round's start date has not arrived."
+        )
+
+    expected_round_number = (
+        max(completed_round_numbers, default=0) + 1
+    )
+
+    if next_round.round_number != expected_round_number:
+        raise ValueError(
+            "Rounds must be completed in sequence."
+        )
+
+    next_round.status = Round.Status.ACTIVE
+    next_round.save(update_fields=["status", "updated_at"])
+
+    return next_round
+
+
+
+@transaction.atomic
+def update_round_payment_status(*, round_obj):
+    today = timezone.localdate()
+
+    if round_obj.status not in [
+        Round.Status.ACTIVE,
+        Round.Status.WAITING_FOR_PAYMENT,
+    ]:
+        raise ValueError(
+            "Only active rounds can have their payment status updated."
+        )
+
+    contributions = list(
+        round_obj.contributions.all()
+    )
+
+    if not contributions:
+        raise ValueError(
+            "Contributions must be created before updating payment status."
+        )
+
+    outstanding_contributions = [
+        contribution
+        for contribution in contributions
+        if contribution.status not in [
+            Contribution.Status.PAID,
+            Contribution.Status.WAIVED,
+        ]
+    ]
+
+    if not outstanding_contributions:
+        round_obj.status = Round.Status.READY_FOR_PAYOUT
+        round_obj.save(update_fields=["status", "updated_at"])
+        return round_obj
+
+    if round_obj.due_date <= today:
+        round_obj.status = Round.Status.WAITING_FOR_PAYMENT
+        round_obj.save(update_fields=["status", "updated_at"])
+
+    return round_obj
+
+
+
+
+@transaction.atomic
+def create_payout(*, round_obj, phone_number):
+    round_obj = Round.objects.select_for_update().get(pk=round_obj.pk)
+
+    if round_obj.status != Round.Status.READY_FOR_PAYOUT:
+        raise ValueError("The round must be ready for payout.")
+
+    if round_obj.payouts.filter(status=Payout.Status.PENDING).exists():
+        raise ValueError("This round already has a pending payout.")
+
+    if round_obj.payouts.filter(status=Payout.Status.SUCCESS).exists():
+        raise ValueError("This round has already been paid successfully.")
+
+    if not round_obj.contributions.exists():
+        raise ValueError("The round has no contributions.")
+
+    outstanding = round_obj.contributions.exclude(
+        status__in=[Contribution.Status.PAID, Contribution.Status.WAIVED]
+    ).exists()
+
+    if outstanding:
+        raise ValueError("All contributions must be paid or waived before payout.")
+
+    return Payout.objects.create(
+        round=round_obj,
+        recipient=round_obj.recipient,
+        amount=round_obj.expected_payout_amount,
+        phone_number=phone_number,
+    )
+
+
+
+
+@transaction.atomic
+def confirm_payout_success(*, payout, transaction_reference):
+    if payout.status == Payout.Status.SUCCESS:
+        if payout.transaction_reference == transaction_reference:
+            return payout
+
+        raise ValueError(
+            "This payout has already been confirmed with a different transaction reference."
+        )
+
+    if payout.status != Payout.Status.PENDING:
+        raise ValueError(
+            "Only pending payouts can be confirmed as successful."
+        )
+
+    if payout.round.status != Round.Status.READY_FOR_PAYOUT:
+        raise ValueError(
+            "The round must be ready for payout."
+        )
+
+    if not transaction_reference:
+        raise ValueError(
+            "A transaction reference is required to confirm the payout."
+        )
+
+    payout.status = Payout.Status.SUCCESS
+    payout.transaction_reference = transaction_reference
+    payout.completed_at = timezone.now()
+    payout.save(update_fields=["status", "transaction_reference", "completed_at", "updated_at"])
+
+    round_obj = payout.round
+    round_obj.status = Round.Status.COMPLETED
+    round_obj.save(update_fields=["status", "updated_at"])
+
+    cycle = round_obj.cycle
+
+    if not cycle.rounds.exclude(status=Round.Status.COMPLETED).exists():
+        cycle.status = Cycle.Status.COMPLETED
+        cycle.save(update_fields=["status", "updated_at"])
+
+    return payout
+
+
+
+@transaction.atomic
+def confirm_payout_failure(*, payout, failure_reason):
+    if payout.status != Payout.Status.PENDING:
+        raise ValueError(
+            "Only pending payouts can be marked as failed."
+        )
+
+    if not failure_reason:
+        raise ValueError(
+            "A failure reason is required."
+        )
+
+    payout.status = Payout.Status.FAILED
+    payout.failure_reason = failure_reason
+    payout.completed_at = timezone.now()
+    payout.save(update_fields=["status", "failure_reason", "completed_at", "updated_at"])
+
+    return payout
+
+
 
 @transaction.atomic
 def remove_member_from_cycle(*, cycle, membership):
