@@ -79,7 +79,10 @@ def initiate_b2c_payment(*, amount, phone_number, originator_conversation_id, re
 
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=30)
-        response.raise_for_status()
+        if not response.ok:
+            print("Daraja B2C HTTP status:", response.status_code)
+            print("Daraja B2C response:", response.text[:1000])
+            response.raise_for_status()
         return response.json()
     except requests.RequestException as exc:
         raise RuntimeError("Could not submit the M-Pesa B2C request.") from exc
