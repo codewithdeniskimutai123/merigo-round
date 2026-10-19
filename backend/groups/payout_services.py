@@ -3,7 +3,7 @@ import uuid
 
 from .models import Payout
 from .mpesa.b2c import initiate_b2c_payment
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from django.db import transaction
 from .group_services import confirm_payout_success, confirm_payout_failure
 
@@ -37,10 +37,27 @@ def submit_payout(*, payout_id):
         occasion=f"Cycle {payout.round.cycle.cycle_number}",
     )
 
+    if not isinstance(response, dict):
+        raise RuntimeError("Daraja returned an invalid B2C response.")
+
+    response_code = response.get("ResponseCode")
     conversation_id = response.get("ConversationID")
 
-    if conversation_id:
-        Payout.objects.filter(pk=payout_id).update(conversation_id=conversation_id)
+    if str(response_code) != "0":
+        raise RuntimeError(
+            "Daraja did not confirm acceptance of the B2C request. "
+            "The payout requires reconciliation before any retry."
+        )
+
+    if not isinstance(conversation_id, str) or not conversation_id.strip():
+        raise RuntimeError(
+            "Daraja did not return a valid conversation ID. "
+            "The payout requires reconciliation before any retry."
+        )
+
+    Payout.objects.filter(pk=payout_id).update(
+        conversation_id=conversation_id,
+    )
 
     return response
 
@@ -49,14 +66,23 @@ def submit_payout(*, payout_id):
 
 @transaction.atomic
 def process_b2c_result(*, result):
+    if not isinstance(result, dict):
+        raise ValueError("B2C result must be a JSON object.")
+
     originator_id = result.get("OriginatorConversationID")
     conversation_id = result.get("ConversationID")
     result_code = result.get("ResultCode")
-    result_description = result.get("ResultDesc", "No result description provided.")
+    result_description = result.get(
+        "ResultDesc",
+        "No result description provided.",
+    )
     transaction_id = result.get("TransactionID")
 
-    if not originator_id or result_code is None:
-        raise ValueError("B2C result is missing required identifiers or result code.")
+    if not isinstance(originator_id, str) or not originator_id.strip():
+        raise ValueError("B2C result is missing a valid originator ID.")
+
+    if result_code is None:
+        raise ValueError("B2C result is missing its result code.")
 
     payout = Payout.objects.select_for_update().get(
         originator_conversation_id=originator_id
@@ -80,12 +106,35 @@ def process_b2c_result(*, result):
         if not transaction_id:
             raise ValueError("Successful B2C result has no transaction ID.")
 
-        parameters = result.get("ResultParameters", {}).get("ResultParameter", [])
-        parameter_map = {item.get("Key"): item.get("Value") for item in parameters}
+        result_parameters = result.get("ResultParameters", {})
+
+        if not isinstance(result_parameters, dict):
+            raise ValueError("B2C result parameters must be an object.")
+
+        parameters = result_parameters.get("ResultParameter", [])
+
+        if not isinstance(parameters, list):
+            raise ValueError("B2C result parameter list is invalid.")
+
+        if not all(isinstance(item, dict) for item in parameters):
+            raise ValueError("B2C result contains an invalid parameter.")
+
+        parameter_map = {
+            item.get("Key"): item.get("Value")
+            for item in parameters
+        }
         transaction_amount = parameter_map.get("TransactionAmount")
 
-        if transaction_amount is None or Decimal(str(transaction_amount)) != payout.amount:
-            raise ValueError("B2C result amount is missing or does not match the payout.")
+        if transaction_amount is None:
+            raise ValueError("B2C result is missing the transaction amount.")
+
+        try:
+            received_amount = Decimal(str(transaction_amount))
+        except (InvalidOperation, TypeError, ValueError):
+            raise ValueError("B2C result contains an invalid transaction amount.") from None
+
+        if not received_amount.is_finite() or received_amount != payout.amount:
+            raise ValueError("B2C result amount does not match the payout.")
 
         return confirm_payout_success(
             payout=payout,
