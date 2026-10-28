@@ -7,3 +7,23 @@ __pycache__/
 .vscode/
 celerybeat-schedule
 celerybeat-schedule.*
+
+.env.*
+!.env.example
+!.env.*.example
+
+
+frontend/node_modules/
+
+frontend/dist/
+
+frontend/node_modules/.vite/
+
+*.py[cod]
+
+# Local Python environment
+backend/.venv/
+backend/venv/
+
+.coverage
+htmlcov/
