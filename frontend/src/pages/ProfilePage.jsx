@@ -1,24 +1,37 @@
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { getCurrentUser } from '../api/authApi'
 
-import { Link, useNavigate } from 'react-router-dom'
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
+).replace(/\/+$/, '')
 
-const profile = {
-  id: 'MR-001',
-  first_name: 'Denis',
-  last_name: 'Kimutai',
-  username: 'deniskimutai',
-  email: 'denis@example.com',
-  phone_number: '+254 712 345 678',
-  profile_photo: '',
-  is_active: true,
-  created_at: 'Available after backend connection',
-  updated_at: 'Available after backend connection',
+function getPhotoUrl(photo) {
+  if (!photo || typeof photo !== 'string') {
+    return ''
+  }
+
+  if (/^https?:\/\//i.test(photo)) {
+    return photo
+  }
+
+  return `${API_BASE_URL}/${photo.replace(/^\/+/, '')}`
 }
 
-const groups = [
-  { id: 1, name: 'Savings Circle', members: 12 },
-  { id: 2, name: 'Merry Friends', members: 8 },
-  { id: 3, name: 'Development Group', members: 15 },
-]
+function formatDate(value) {
+  if (!value) {
+    return 'Not available'
+  }
+
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+
+  return date.toLocaleString()
+}
 
 function Panel({ title, children }) {
   return (
@@ -30,11 +43,16 @@ function Panel({ title, children }) {
 }
 
 function Detail({ label, value }) {
+  const displayValue =
+    value !== null && value !== undefined && value !== ''
+      ? value
+      : 'Not provided'
+
   return (
     <div className="min-w-0">
       <p className="text-sm text-text-muted">{label}</p>
       <p className="mt-1 break-words font-medium text-text">
-        {value || 'Not provided'}
+        {displayValue}
       </p>
     </div>
   )
@@ -55,222 +73,271 @@ function AccountLink({ to, title, description }) {
 }
 
 export default function ProfilePage() {
-  const navigate = useNavigate()
+  const [photoLoadError, setPhotoLoadError] = useState(false)
+
+  const {
+    data: profile,
+    isLoading,
+    isError,
+    error,
+    refetch,
+    isFetching,
+  } = useQuery({
+    queryKey: ['currentUser'],
+    queryFn: async () => {
+      const response = await getCurrentUser()
+      return response?.data ?? response
+    },
+    staleTime: 0,
+    refetchOnMount: 'always',
+    retry: 1,
+  })
+
+  const photoUrl = getPhotoUrl(profile?.profile_photo)
+
+  useEffect(() => {
+    setPhotoLoadError(false)
+  }, [photoUrl])
+
+  const firstName = profile?.first_name || ''
+  const lastName = profile?.last_name || ''
+  const username = profile?.username || ''
 
   const fullName =
-    `${profile.first_name} ${profile.last_name}`.trim() || profile.username
+    `${firstName} ${lastName}`.trim() ||
+    username ||
+    'Your profile'
 
-  function handleLogout() {
-    const confirmed = window.confirm(
-      'Are you sure you want to log out?'
-    )
+  const initials =
+    `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase() ||
+    username.charAt(0).toUpperCase() ||
+    'U'
 
-    if (confirmed) {
-      // Real authentication-token cleanup will be added during integration.
-      navigate('/login')
-    }
-  }
+  const accountStatus =
+    typeof profile?.is_active === 'boolean'
+      ? profile.is_active
+        ? 'Active'
+        : 'Inactive'
+      : 'Not available'
 
-  return (
-  
+  if (isLoading) {
+    return (
       <main className="min-h-screen bg-page text-text transition-colors">
         <div className="mx-auto max-w-6xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
-          <header className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-semibold text-brand-600">
-                MERIGO ROUND
-              </p>
-              <h1 className="mt-2 text-3xl font-bold">My Profile</h1>
-              <p className="mt-2 text-sm text-text-muted">
-                Manage your personal details, preferences, groups and security.
-              </p>
-            </div>
-
+          <header>
+            <p className="text-sm font-semibold text-brand-600">
+              MERIGO ROUND
+            </p>
+            <h1 className="mt-2 text-3xl font-bold">My Profile</h1>
           </header>
 
           <section className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
-            <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
-              <div className="flex items-center gap-4">
-                {profile.profile_photo ? (
-                  <img
-                    src={profile.profile_photo}
-                    alt="Profile"
-                    className="h-20 w-20 rounded-full object-cover"
-                  />
-                ) : (
-                  <div className="flex h-20 w-20 items-center justify-center rounded-full bg-brand-600 text-2xl font-bold text-white">
-                    {profile.first_name.charAt(0)}
-                    {profile.last_name.charAt(0)}
-                  </div>
-                )}
+            <p className="text-sm text-text-muted">
+              Loading your profile details...
+            </p>
+          </section>
+        </div>
+      </main>
+    )
+  }
 
-                <div>
-                  <h2 className="text-xl font-bold">{fullName}</h2>
-                  <p className="mt-1 text-sm text-text-muted">
-                    @{profile.username}
-                  </p>
-                  <p className="mt-2 text-sm font-medium text-brand-600">
-                    {profile.is_active ? 'Active account' : 'Inactive account'}
-                  </p>
-                </div>
-              </div>
+  if (isError || !profile || typeof profile !== 'object') {
+    return (
+      <main className="min-h-screen bg-page text-text transition-colors">
+        <div className="mx-auto max-w-6xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
+          <header>
+            <p className="text-sm font-semibold text-brand-600">
+              MERIGO ROUND
+            </p>
+            <h1 className="mt-2 text-3xl font-bold">My Profile</h1>
+          </header>
+
+          <section className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
+            <h2 className="text-lg font-semibold">
+              Unable to load your profile
+            </h2>
+
+            <p className="mt-2 text-sm leading-6 text-text-muted">
+              We could not retrieve your account details. Check that you
+              are signed in and that the backend server is running.
+            </p>
+
+            {error?.response?.status === 401 && (
+              <p className="mt-2 text-sm text-red-600">
+                Your session may have expired. Please sign in again.
+              </p>
+            )}
+
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => refetch()}
+                disabled={isFetching}
+                className="rounded-lg bg-brand-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isFetching ? 'Retrying...' : 'Try again'}
+              </button>
 
               <Link
-                to="/edit-profile"
-                className="inline-flex justify-center rounded-lg bg-brand-600 px-5 py-3 text-sm font-semibold text-white hover:bg-brand-700"
+                to="/login"
+                className="rounded-lg border border-border px-5 py-3 text-sm font-semibold transition-colors hover:bg-page"
               >
-                Edit profile
+                Go to login
               </Link>
             </div>
           </section>
+        </div>
+      </main>
+    )
+  }
 
-          <div className="grid items-start gap-6 lg:grid-cols-[1.6fr_1fr]">
-            <div className="space-y-6">
-              <Panel title="Profile details">
-                <div className="grid gap-6 sm:grid-cols-2">
-                  <Detail label="Account ID" value={profile.id} />
-                  <Detail label="First name" value={profile.first_name} />
-                  <Detail label="Last name" value={profile.last_name} />
-                  <Detail label="Username" value={profile.username} />
-                  <Detail label="Email address" value={profile.email} />
-                  <Detail label="Phone number" value={profile.phone_number} />
-                  <Detail
-                    label="Account status"
-                    value={profile.is_active ? 'Active' : 'Inactive'}
-                  />
-                  <Detail label="Account created" value={profile.created_at} />
-                  <Detail label="Last updated" value={profile.updated_at} />
+  return (
+    <main className="min-h-screen bg-page text-text transition-colors">
+      <div className="mx-auto max-w-6xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
+        {/* Page heading */}
+        <header>
+          <p className="text-sm font-semibold text-brand-600">
+            MERIGO ROUND
+          </p>
+
+          <h1 className="mt-2 text-3xl font-bold">My Profile</h1>
+
+          <p className="mt-2 text-sm text-text-muted">
+            View your personal information, group memberships and account
+            details.
+          </p>
+        </header>
+
+        {/* Profile summary */}
+        <section className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
+          <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
+            <div className="flex items-center gap-4">
+              {photoUrl && !photoLoadError ? (
+                <img
+                  src={photoUrl}
+                  alt={`${fullName}'s profile`}
+                  className="h-20 w-20 shrink-0 rounded-full border border-border object-cover"
+                  onError={() => setPhotoLoadError(true)}
+                />
+              ) : (
+                <div
+                  className="flex h-20 w-20 shrink-0 items-center justify-center rounded-full bg-brand-600 text-2xl font-bold text-white"
+                  aria-label="Profile photo unavailable"
+                >
+                  {initials}
                 </div>
-              </Panel>
+              )}
 
-              <Panel title="My group memberships">
-                <p className="mb-5 text-sm text-text-muted">
-                  View the groups you belong to.
+              <div className="min-w-0">
+                <h2 className="break-words text-xl font-bold">
+                  {fullName}
+                </h2>
+
+                <p className="mt-1 break-words text-sm text-text-muted">
+                  @{username || 'username unavailable'}
                 </p>
 
-                <div className="space-y-3">
-                  {groups.map((group) => (
-                    <Link
-                      key={group.id}
-                      to="/groups"
-                      className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border p-4 transition-colors hover:bg-page"
-                    >
-                      <div>
-                        <p className="font-semibold text-text">
-                          {group.name}
-                        </p>
-                        <p className="mt-1 text-sm text-text-muted">
-                          {group.members} members
-                        </p>
-                      </div>
-
-                      <span className="text-sm font-medium text-brand-600">
-                        View groups
-                      </span>
-                    </Link>
-                  ))}
-                </div>
-
-                <p className="mt-4 text-xs text-text-muted">
-                  These are sample groups. Actual memberships will come from
-                  Django.
+                <p className="mt-2 text-sm font-medium text-brand-600">
+                  {accountStatus === 'Not available'
+                    ? 'Account status unavailable'
+                    : `${accountStatus} account`}
                 </p>
-              </Panel>
+              </div>
             </div>
 
-            <aside className="space-y-6">
-              <Panel title="Account settings">
-                <div className="space-y-3">
-                  <AccountLink
-                    to="/settings"
-                    title="Account settings"
-                    description="Manage appearance, notifications and account access."
-                  />
+            <Link
+              to="/edit-profile"
+              className="inline-flex justify-center rounded-lg bg-brand-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-brand-700"
+            >
+              Edit profile
+            </Link>
+          </div>
+        </section>
 
-                  <AccountLink
-                    to="/edit-profile"
-                    title="Edit profile"
-                    description="Update your personal information and profile photo."
-                  />
+        <div className="grid items-start gap-6 lg:grid-cols-[1.6fr_1fr]">
+          {/* Profile information */}
+          <div className="space-y-6">
+            <Panel title="Profile details">
+              <div className="grid gap-6 sm:grid-cols-2">
+                <Detail label="Account ID" value={profile.id} />
+                <Detail label="First name" value={profile.first_name} />
+                <Detail label="Last name" value={profile.last_name} />
+                <Detail label="Username" value={profile.username} />
+                <Detail label="Email address" value={profile.email} />
+                <Detail label="Phone number" value={profile.phone_number} />
+                <Detail label="Account status" value={accountStatus} />
+                <Detail
+                  label="Account created"
+                  value={formatDate(profile.created_at)}
+                />
+                <Detail
+                  label="Last updated"
+                  value={formatDate(profile.updated_at)}
+                />
+              </div>
+            </Panel>
 
-                  <AccountLink
-                    to="/change-password"
-                    title="Change password"
-                    description="Change your current password securely."
-                  />
+            {/* Group information */}
+            <Panel title="My group memberships">
+              <p className="mb-5 text-sm text-text-muted">
+                Your group membership information will be connected to the
+                backend group APIs in a later development step.
+              </p>
 
-                  <AccountLink
-                    to="/forgot-password"
-                    title="Forgot password"
-                    description="Start the password recovery process if you cannot sign in."
-                  />
-                </div>
-              </Panel>
-
-              <Panel title="Sign-in options">
-                <div className="space-y-3">
-                  <AccountLink
-                    to="/login"
-                    title="Login page"
-                    description="Return to the sign-in page."
-                  />
-
-                  <AccountLink
-                    to="/register"
-                    title="Create an account"
-                    description="Open the registration page."
-                  />
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleLogout}
-                  className="mt-4 w-full rounded-lg border border-border px-4 py-3 text-sm font-semibold transition-colors hover:bg-page"
-                >
-                  Log out
-                </button>
-              </Panel>
-
-              <Panel title="Account security">
-                <p className="font-medium">
-                  Keep your account protected
+              <div className="rounded-xl border border-border p-4">
+                <p className="font-semibold text-text">
+                  Your groups and contribution activity
                 </p>
 
-                <p className="mt-2 text-sm leading-6 text-text-muted">
-                  Use a strong password and never share your login details
-                  with other group members.
+                <p className="mt-1 text-sm leading-6 text-text-muted">
+                  Your groups, membership roles, contribution history,
+                  payment status, payout information and cycle details
+                  will appear here when the group APIs are connected.
                 </p>
 
                 <Link
-                  to="/change-password"
-                  className="mt-4 inline-block text-sm font-semibold text-brand-600 hover:underline"
+                  to="/groups"
+                  className="mt-3 inline-block text-sm font-semibold text-brand-600 hover:underline"
                 >
-                  Manage password
+                  View groups
                 </Link>
-              </Panel>
-
-              <section className="rounded-2xl border border-red-300 bg-surface p-5 shadow-sm sm:p-6">
-                <h2 className="text-lg font-semibold text-red-600">
-                  Delete account
-                </h2>
-
-                <p className="mt-2 text-sm leading-6 text-text-muted">
-                  Account deletion may permanently remove your account and
-                  associated information. This action remains unavailable
-                  until the backend deletion process is implemented.
-                </p>
-
-                <button
-                  type="button"
-                  disabled
-                  className="mt-5 w-full cursor-not-allowed rounded-lg border border-red-300 px-4 py-3 text-sm font-semibold text-red-500 opacity-70"
-                >
-                  Delete account — unavailable
-                </button>
-              </section>
-            </aside>
+              </div>
+            </Panel>
           </div>
+
+          {/* Account navigation */}
+          <aside className="space-y-6">
+            <Panel title="Manage your account">
+              <div className="space-y-3">
+                <AccountLink
+                  to="/settings"
+                  title="Account settings"
+                  description="Manage notifications, security, privacy and account access."
+                />
+              </div>
+            </Panel>
+
+            <Panel title="Account security">
+              <p className="font-medium">
+                Keep your account protected
+              </p>
+
+              <p className="mt-2 text-sm leading-6 text-text-muted">
+                Use a strong password and never share your login details
+                with other group members. Review your security options
+                from Account Settings.
+              </p>
+
+              <Link
+                to="/settings"
+                className="mt-4 inline-block text-sm font-semibold text-brand-600 hover:underline"
+              >
+                Manage security settings
+              </Link>
+            </Panel>
+          </aside>
         </div>
-      </main>
+      </div>
+    </main>
   )
 }
