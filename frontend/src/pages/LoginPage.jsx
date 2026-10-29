@@ -1,4 +1,3 @@
-
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { GoogleLogin } from '@react-oauth/google'
@@ -24,10 +23,12 @@ export default function LoginPage() {
   const navigate = useNavigate()
   const loginMutation = useLogin()
 
+  const isSigningIn = loginMutation.isPending || googleLoading
+
   function handleSubmit(event) {
     event.preventDefault()
 
-    if (loginMutation.isPending) {
+    if (isSigningIn) {
       return
     }
 
@@ -96,14 +97,14 @@ export default function LoginPage() {
   }
 
   async function handleGoogleSuccess(credentialResponse) {
+    if (isSigningIn) {
+      return
+    }
+
     const credential = credentialResponse?.credential
 
     if (!credential) {
       toast.error('Google did not return a sign-in credential.')
-      return
-    }
-
-    if (googleLoading) {
       return
     }
 
@@ -118,14 +119,12 @@ export default function LoginPage() {
         )
       }
 
-      
       localStorage.setItem('access', data.access)
       localStorage.setItem('refresh', data.refresh)
 
       if (data.user) {
         localStorage.setItem('user', JSON.stringify(data.user))
       }
-
 
       window.dispatchEvent(new Event('auth-change'))
 
@@ -155,113 +154,158 @@ export default function LoginPage() {
   }
 
   function handleGoogleError() {
+    setGoogleLoading(false)
     toast.error('Google sign-in was unsuccessful. Please try again.')
   }
 
   return (
     <div className="mx-auto w-full max-w-md">
-      <Card
-        title="Sign in to Merigo Round"
-        description="Enter your details to continue to your dashboard."
+      <div
+        className={`relative transition-opacity duration-200 ${
+          isSigningIn ? 'pointer-events-none opacity-50' : 'opacity-100'
+        }`}
+        aria-busy={isSigningIn}
       >
-        <form onSubmit={handleSubmit} noValidate className="space-y-5">
-          <div>
-            <Input
-              id="username"
-              name="username"
-              label="Username"
-              placeholder="Enter your username"
-              value={username}
-              onChange={handleUsernameChange}
-              invalid={Boolean(errors.username)}
-              required
-            />
-
-            {errors.username && (
-              <p role="alert" className="mt-1.5 text-sm text-red-600">
-                {errors.username}
-              </p>
-            )}
-          </div>
-
-          <div className="space-y-2">
+        <Card
+          title="Sign in to Merigo Round"
+          description="Enter your details to continue to your dashboard."
+        >
+          <form onSubmit={handleSubmit} noValidate className="space-y-5">
             <div>
               <Input
-                id="password"
-                name="password"
-                label="Password"
-                type={showPassword ? 'text' : 'password'}
-                placeholder="Enter your password"
-                value={password}
-                onChange={handlePasswordChange}
-                invalid={Boolean(errors.password)}
+                id="username"
+                name="username"
+                label="Username"
+                placeholder="Enter your username"
+                value={username}
+                onChange={handleUsernameChange}
+                invalid={Boolean(errors.username)}
                 required
+                disabled={isSigningIn}
               />
 
-              {errors.password && (
+              {errors.username && (
                 <p role="alert" className="mt-1.5 text-sm text-red-600">
-                  {errors.password}
+                  {errors.username}
                 </p>
               )}
             </div>
 
-            <div className="flex flex-wrap justify-between gap-3">
-              <button
-                type="button"
-                onClick={() => setShowPassword((current) => !current)}
-                className="text-sm font-medium text-brand-600 hover:underline"
-              >
-                {showPassword ? 'Hide password' : 'Show password'}
-              </button>
+            <div className="space-y-2">
+              <div>
+                <Input
+                  id="password"
+                  name="password"
+                  label="Password"
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={handlePasswordChange}
+                  invalid={Boolean(errors.password)}
+                  required
+                  disabled={isSigningIn}
+                />
 
-              <Link
-                to="/forgot-password"
-                className="text-sm font-medium text-brand-600 hover:underline"
-              >
-                Forgot password?
-              </Link>
+                {errors.password && (
+                  <p role="alert" className="mt-1.5 text-sm text-red-600">
+                    {errors.password}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-wrap justify-between gap-3">
+                <button
+                  type="button"
+                  disabled={isSigningIn}
+                  onClick={() => setShowPassword((current) => !current)}
+                  className="text-sm font-medium text-brand-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {showPassword ? 'Hide password' : 'Show password'}
+                </button>
+
+                <Link
+                  to="/forgot-password"
+                  aria-disabled={isSigningIn}
+                  tabIndex={isSigningIn ? -1 : 0}
+                  onClick={(event) => {
+                    if (isSigningIn) event.preventDefault()
+                  }}
+                  className="text-sm font-medium text-brand-600 hover:underline aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                >
+                  Forgot password?
+                </Link>
+              </div>
             </div>
+
+            <Button type="submit" disabled={isSigningIn}>
+              {loginMutation.isPending ? 'Signing in...' : 'Sign in'}
+            </Button>
+          </form>
+
+          <div className="my-5 flex items-center gap-3">
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-sm text-text-muted">OR</span>
+            <div className="h-px flex-1 bg-border" />
           </div>
 
-          <Button type="submit" disabled={loginMutation.isPending}>
-            {loginMutation.isPending ? 'Signing in...' : 'Sign in'}
-          </Button>
-        </form>
+          <div className="flex min-h-10 justify-center">
+            {googleLoading ? (
+              <p role="status" className="text-sm text-text-muted">
+                Signing in with Google...
+              </p>
+            ) : (
+              <div
+                className={
+                  isSigningIn
+                    ? 'pointer-events-none opacity-50'
+                    : ''
+                }
+              >
+                <GoogleLogin
+                  onSuccess={handleGoogleSuccess}
+                  onError={handleGoogleError}
+                  text="continue_with"
+                  shape="rectangular"
+                  theme="outline"
+                  size="large"
+                  width="320"
+                />
+              </div>
+            )}
+          </div>
 
-        <div className="my-5 flex items-center gap-3">
-          <div className="h-px flex-1 bg-border" />
-          <span className="text-sm text-text-muted">OR</span>
-          <div className="h-px flex-1 bg-border" />
-        </div>
+          <p className="mt-5 text-center text-sm text-text-muted">
+            Don't have an account?{' '}
+            <Link
+              to="/register"
+              aria-disabled={isSigningIn}
+              tabIndex={isSigningIn ? -1 : 0}
+              onClick={(event) => {
+                if (isSigningIn) event.preventDefault()
+              }}
+              className="font-medium text-brand-600 hover:underline aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+            >
+              Create account
+            </Link>
+          </p>
+        </Card>
 
-        <div className="flex min-h-10 justify-center">
-          {googleLoading ? (
-            <p className="text-sm text-text-muted">
-              Signing in with Google...
-            </p>
-          ) : (
-            <GoogleLogin
-              onSuccess={handleGoogleSuccess}
-              onError={handleGoogleError}
-              text="continue_with"
-              shape="rectangular"
-              theme="outline"
-              size="large"
-              width="320"
-            />
-          )}
-        </div>
-
-        <p className="mt-5 text-center text-sm text-text-muted">
-          Don't have an account?{' '}
-          <Link
-            to="/register"
-            className="font-medium text-brand-600 hover:underline"
+        {isSigningIn && (
+          <div
+            className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-background/20"
+            aria-hidden="true"
           >
-            Create account
-          </Link>
-        </p>
-      </Card>
+            <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-3 shadow-lg">
+              <span className="h-5 w-5 animate-spin rounded-full border-2 border-brand-600 border-t-transparent" />
+              <span className="text-sm font-medium text-text">
+                {googleLoading
+                  ? 'Signing in with Google...'
+                  : 'Signing in...'}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
