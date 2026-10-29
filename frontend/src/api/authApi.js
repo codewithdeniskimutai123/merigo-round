@@ -13,19 +13,30 @@ export async function registerUser(userData) {
   return response.data
 }
 
-// Get a new access token using a refresh token.
 export async function refreshToken(refresh) {
   const response = await api.post('/api/auth/refresh/', { refresh })
   return response.data
 }
 
-// Get the currently authenticated user's profile.
+
 export async function getCurrentUser() {
   const response = await api.get('/api/auth/me/')
   return response.data
 }
 
-// Change the password of an authenticated user.
+
+export async function updateCurrentUser(profileData) {
+  const response = await api.patch('/api/auth/me/', profileData, {
+    headers: {
+      'Content-Type': undefined,
+    },
+  })
+
+  return response.data
+}
+
+
+
 export async function changePassword(passwordData) {
   const response = await api.post(
     '/api/auth/change-password/',
@@ -34,20 +45,26 @@ export async function changePassword(passwordData) {
   return response.data
 }
 
-// Request a password reset email.
+
 export async function requestPasswordReset(email) {
   const response = await api.post('/api/auth/forgot-password/', { email })
   return response.data
 }
 
-// Submit the new password and reset token.
+
 export async function resetPassword(resetData) {
   const response = await api.post('/api/auth/reset-password/', resetData)
   return response.data
 }
 
-// Authenticate using a Google credential.
+
+
+
 export async function loginWithGoogle(credential) {
-  const response = await api.post('/api/auth/google/', { credential })
+  const response = await api.post('/api/auth/google/', {
+    token: credential,
+  })
+
   return response.data
 }
+
