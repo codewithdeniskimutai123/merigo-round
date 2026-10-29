@@ -3,6 +3,32 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { loginUser } from '../api/authApi.js'
 
+function getLoginErrorMessage(error) {
+  const data = error.response?.data
+
+  if (typeof data?.detail === 'string') {
+    return data.detail
+  }
+
+  if (Array.isArray(data?.non_field_errors)) {
+    return data.non_field_errors[0]
+  }
+
+  if (Array.isArray(data?.username)) {
+    return data.username[0]
+  }
+
+  if (Array.isArray(data?.password)) {
+    return data.password[0]
+  }
+
+  if (!error.response) {
+    return 'Unable to connect to the server. Check your connection and try again.'
+  }
+
+  return 'Login failed. Please check your credentials and try again.'
+}
+
 export default function useLogin() {
   const queryClient = useQueryClient()
 
@@ -39,13 +65,11 @@ export default function useLogin() {
     },
 
     onError: (error) => {
-      const message =
-        error.response?.data?.detail ||
-        error.response?.data?.non_field_errors?.[0] ||
-        error.message ||
-        'Login failed. Please try again.'
-
-      toast.error(message)
+      toast.error(
+        error.message === 'The server did not return an access token.'
+          ? error.message
+          : getLoginErrorMessage(error),
+      )
     },
   })
 }
