@@ -1,4 +1,3 @@
-
 import { useState } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { GoogleLogin } from '@react-oauth/google'
@@ -96,17 +95,6 @@ export default function RegisterPage() {
   const [errors, setErrors] = useState({})
   const [googleLoading, setGoogleLoading] = useState(false)
 
-  function handleCancel() {
-    const hasPreviousPage =
-      location.key !== 'default' && window.history.length > 1
-
-    if (hasPreviousPage) {
-      navigate(-1)
-    } else {
-      navigate('/', { replace: true })
-    }
-  }
-
   const registrationMutation = useMutation({
     mutationFn: registerUser,
 
@@ -119,6 +107,21 @@ export default function RegisterPage() {
       setErrors(getRegistrationErrors(error))
     },
   })
+
+  const isSubmitting = registrationMutation.isPending || googleLoading
+
+  function handleCancel() {
+    if (isSubmitting) return
+
+    const hasPreviousPage =
+      location.key !== 'default' && window.history.length > 1
+
+    if (hasPreviousPage) {
+      navigate(-1)
+    } else {
+      navigate('/', { replace: true })
+    }
+  }
 
   function handleChange(event) {
     const { name, value } = event.target
@@ -138,16 +141,12 @@ export default function RegisterPage() {
   function handleSubmit(event) {
     event.preventDefault()
 
-    if (registrationMutation.isPending || googleLoading) {
-      return
-    }
+    if (isSubmitting) return
 
     const validationErrors = validateForm(formData)
     setErrors(validationErrors)
 
-    if (Object.keys(validationErrors).length > 0) {
-      return
-    }
+    if (Object.keys(validationErrors).length > 0) return
 
     registrationMutation.mutate({
       username: formData.username.trim(),
@@ -158,14 +157,12 @@ export default function RegisterPage() {
   }
 
   async function handleGoogleSuccess(credentialResponse) {
+    if (isSubmitting) return
+
     const credential = credentialResponse?.credential
 
     if (!credential) {
       toast.error('Google did not return a sign-in credential.')
-      return
-    }
-
-    if (googleLoading || registrationMutation.isPending) {
       return
     }
 
@@ -208,9 +205,7 @@ export default function RegisterPage() {
       } else if (typeof data?.error === 'string') {
         toast.error(data.error)
       } else {
-        toast.error(
-          'Google sign-up failed. Please try again.',
-        )
+        toast.error('Google sign-up failed. Please try again.')
       }
     } finally {
       setGoogleLoading(false)
@@ -218,198 +213,231 @@ export default function RegisterPage() {
   }
 
   function handleGoogleError() {
+    setGoogleLoading(false)
     toast.error('Google sign-in was unsuccessful. Please try again.')
   }
 
   return (
     <div className="mx-auto w-full max-w-lg">
-      <Card
-        title="Create your account"
-        description="Enter your details to get started."
+      <div
+        className={`relative transition-opacity duration-200 ${
+          isSubmitting
+            ? 'pointer-events-none opacity-50'
+            : 'opacity-100'
+        }`}
+        aria-busy={isSubmitting}
       >
-        {errors.form && (
+        <Card
+          title="Create your account"
+          description="Enter your details to get started."
+        >
+          {errors.form && (
+            <div
+              role="alert"
+              className="mb-5 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700"
+            >
+              {errors.form}
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} noValidate className="space-y-5">
+            <div>
+              <Input
+                id="username"
+                name="username"
+                label="Username"
+                placeholder="Choose a username"
+                value={formData.username}
+                onChange={handleChange}
+                invalid={Boolean(errors.username)}
+                required
+                disabled={isSubmitting}
+              />
+              {errors.username && (
+                <p className="mt-1 text-sm text-red-600" role="alert">
+                  {errors.username}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <Input
+                id="email"
+                name="email"
+                label="Email address"
+                type="email"
+                placeholder="you@example.com"
+                value={formData.email}
+                onChange={handleChange}
+                invalid={Boolean(errors.email)}
+                required
+                disabled={isSubmitting}
+              />
+              {errors.email && (
+                <p className="mt-1 text-sm text-red-600" role="alert">
+                  {errors.email}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <Input
+                id="phone_number"
+                name="phone_number"
+                label="Phone number"
+                type="tel"
+                placeholder="e.g. 0712345678"
+                value={formData.phone_number}
+                onChange={handleChange}
+                invalid={Boolean(errors.phone_number)}
+                required
+                disabled={isSubmitting}
+              />
+              {errors.phone_number && (
+                <p className="mt-1 text-sm text-red-600" role="alert">
+                  {errors.phone_number}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <Input
+                id="password"
+                name="password"
+                label="Password"
+                type={showPassword ? 'text' : 'password'}
+                placeholder="Create a strong password"
+                value={formData.password}
+                onChange={handleChange}
+                invalid={Boolean(errors.password)}
+                required
+                disabled={isSubmitting}
+              />
+
+              {errors.password && (
+                <p className="mt-1 text-sm text-red-600" role="alert">
+                  {errors.password}
+                </p>
+              )}
+
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={() => setShowPassword((previous) => !previous)}
+                className="mt-2 text-sm font-medium text-brand-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {showPassword ? 'Hide password' : 'Show password'}
+              </button>
+            </div>
+
+            <div>
+              <Input
+                id="confirmPassword"
+                name="confirmPassword"
+                label="Confirm password"
+                type={showConfirmPassword ? 'text' : 'password'}
+                placeholder="Enter your password again"
+                value={formData.confirmPassword}
+                onChange={handleChange}
+                invalid={Boolean(errors.confirmPassword)}
+                required
+                disabled={isSubmitting}
+              />
+
+              {errors.confirmPassword && (
+                <p className="mt-1 text-sm text-red-600" role="alert">
+                  {errors.confirmPassword}
+                </p>
+              )}
+
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={() =>
+                  setShowConfirmPassword((previous) => !previous)
+                }
+                className="mt-2 text-sm font-medium text-brand-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {showConfirmPassword
+                  ? 'Hide password'
+                  : 'Show password'}
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <Button type="submit" disabled={isSubmitting}>
+                {registrationMutation.isPending
+                  ? 'Creating account...'
+                  : 'Create account'}
+              </Button>
+
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={handleCancel}
+                disabled={isSubmitting}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+
+          <div className="my-5 flex items-center gap-3">
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-sm text-text-muted">OR</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
+          <div className="flex min-h-10 justify-center">
+            {googleLoading ? (
+              <p role="status" className="text-sm text-text-muted">
+                Creating your account or signing you in...
+              </p>
+            ) : (
+              <GoogleLogin
+                onSuccess={handleGoogleSuccess}
+                onError={handleGoogleError}
+                text="continue_with"
+                shape="rectangular"
+                theme="outline"
+                size="large"
+                width="320"
+              />
+            )}
+          </div>
+
+          <p className="mt-5 text-center text-sm text-text-muted">
+            Already have an account?{' '}
+            <Link
+              to="/login"
+              aria-disabled={isSubmitting}
+              tabIndex={isSubmitting ? -1 : 0}
+              onClick={(event) => {
+                if (isSubmitting) event.preventDefault()
+              }}
+              className="font-medium text-brand-600 hover:underline aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+            >
+              Sign in
+            </Link>
+          </p>
+        </Card>
+
+        {isSubmitting && (
           <div
-            role="alert"
-            className="mb-5 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700"
+            className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-background/20"
+            aria-hidden="true"
           >
-            {errors.form}
+            <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-3 shadow-lg">
+              <span className="h-5 w-5 animate-spin rounded-full border-2 border-brand-600 border-t-transparent" />
+              <span className="text-sm font-medium text-text">
+                {googleLoading
+                  ? 'Signing in with Google...'
+                  : 'Creating your account...'}
+              </span>
+            </div>
           </div>
         )}
-
-        <form onSubmit={handleSubmit} noValidate className="space-y-5">
-          <div>
-            <Input
-              id="username"
-              name="username"
-              label="Username"
-              placeholder="Choose a username"
-              value={formData.username}
-              onChange={handleChange}
-              invalid={Boolean(errors.username)}
-              required
-            />
-            {errors.username && (
-              <p className="mt-1 text-sm text-red-600" role="alert">
-                {errors.username}
-              </p>
-            )}
-          </div>
-
-          <div>
-            <Input
-              id="email"
-              name="email"
-              label="Email address"
-              type="email"
-              placeholder="you@example.com"
-              value={formData.email}
-              onChange={handleChange}
-              invalid={Boolean(errors.email)}
-              required
-            />
-            {errors.email && (
-              <p className="mt-1 text-sm text-red-600" role="alert">
-                {errors.email}
-              </p>
-            )}
-          </div>
-
-          <div>
-            <Input
-              id="phone_number"
-              name="phone_number"
-              label="Phone number"
-              type="tel"
-              placeholder="e.g. 0712345678"
-              value={formData.phone_number}
-              onChange={handleChange}
-              invalid={Boolean(errors.phone_number)}
-              required
-            />
-            {errors.phone_number && (
-              <p className="mt-1 text-sm text-red-600" role="alert">
-                {errors.phone_number}
-              </p>
-            )}
-          </div>
-
-          <div>
-            <Input
-              id="password"
-              name="password"
-              label="Password"
-              type={showPassword ? 'text' : 'password'}
-              placeholder="Create a strong password"
-              value={formData.password}
-              onChange={handleChange}
-              invalid={Boolean(errors.password)}
-              required
-            />
-
-            {errors.password && (
-              <p className="mt-1 text-sm text-red-600" role="alert">
-                {errors.password}
-              </p>
-            )}
-
-            <button
-              type="button"
-              onClick={() => setShowPassword((previous) => !previous)}
-              className="mt-2 text-sm font-medium text-brand-600 hover:underline"
-            >
-              {showPassword ? 'Hide password' : 'Show password'}
-            </button>
-          </div>
-
-          <div>
-            <Input
-              id="confirmPassword"
-              name="confirmPassword"
-              label="Confirm password"
-              type={showConfirmPassword ? 'text' : 'password'}
-              placeholder="Enter your password again"
-              value={formData.confirmPassword}
-              onChange={handleChange}
-              invalid={Boolean(errors.confirmPassword)}
-              required
-            />
-
-            {errors.confirmPassword && (
-              <p className="mt-1 text-sm text-red-600" role="alert">
-                {errors.confirmPassword}
-              </p>
-            )}
-
-            <button
-              type="button"
-              onClick={() =>
-                setShowConfirmPassword((previous) => !previous)
-              }
-              className="mt-2 text-sm font-medium text-brand-600 hover:underline"
-            >
-              {showConfirmPassword ? 'Hide password' : 'Show password'}
-            </button>
-          </div>
-
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <Button
-              type="submit"
-              disabled={
-                registrationMutation.isPending || googleLoading
-              }
-            >
-              {registrationMutation.isPending
-                ? 'Creating account...'
-                : 'Create account'}
-            </Button>
-
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={handleCancel}
-              disabled={
-                registrationMutation.isPending || googleLoading
-              }
-            >
-              Cancel
-            </Button>
-          </div>
-        </form>
-
-        <div className="my-5 flex items-center gap-3">
-          <div className="h-px flex-1 bg-border" />
-          <span className="text-sm text-text-muted">OR</span>
-          <div className="h-px flex-1 bg-border" />
-        </div>
-
-        <div className="flex min-h-10 justify-center">
-          {googleLoading ? (
-            <p className="text-sm text-text-muted">
-              Creating your account or signing you in...
-            </p>
-          ) : (
-            <GoogleLogin
-              onSuccess={handleGoogleSuccess}
-              onError={handleGoogleError}
-              text="continue_with"
-              shape="rectangular"
-              theme="outline"
-              size="large"
-              width="320"
-            />
-          )}
-        </div>
-
-        <p className="mt-5 text-center text-sm text-text-muted">
-          Already have an account?{' '}
-          <Link
-            to="/login"
-            className="font-medium text-brand-600 hover:underline"
-          >
-            Sign in
-          </Link>
-        </p>
-      </Card>
+      </div>
     </div>
   )
 }
