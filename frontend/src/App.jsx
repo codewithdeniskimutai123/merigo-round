@@ -19,23 +19,20 @@ export default function App() {
   return (
     <Routes>
       <Route element={<PageLayout />}>
-        {/* Public homepage */}
         <Route path="/" element={<HomePage />} />
 
-        {/* Authentication */}
+  
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
 
-        {/* Member account */}
         <Route path="/dashboard" element={<MemberDashboard />} />
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/edit-profile" element={<EditProfilePage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/change-password" element={<ChangePasswordPage />} />
 
-        {/* Group workspace */}
         <Route path="/groups/:id" element={<GroupWorkspace />} />
       </Route>
 
