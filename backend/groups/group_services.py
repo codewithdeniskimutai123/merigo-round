@@ -32,11 +32,72 @@ def create_group(*,user, name, description, contribution_amount, frequency, star
 
     return group
 
+@transaction.atomic
+def archive_group(*, user, group):
+
+    membership = GroupMembership.objects.filter(
+        user=user,
+        group=group,
+        status=GroupMembership.Status.ACTIVE,
+        role=GroupMembership.Role.ADMIN,
+    ).first()
+
+    if membership is None:
+        raise ValueError(
+            "Only an active group admin can archive this group."
+        )
+
+    if group.status == Group.Status.ARCHIVED:
+        raise ValueError(
+            "This group has already been archived."
+        )
+
+    group.status = Group.Status.ARCHIVED
+    group.save(update_fields=["status", "updated_at"])
+
+    return group
 
 @transaction.atomic
 def add_member(*, user, group):
     if group.status != Group.Status.ACTIVE:
-        raise ValueError("Members can only be added to an active group.")
+        raise ValueError(
+            "Members can only request to join an active group."
+        )
+
+    membership = GroupMembership.objects.select_for_update().filter(
+        user=user,
+        group=group,
+    ).first()
+
+    if membership:
+        if membership.status == GroupMembership.Status.ACTIVE:
+            raise ValueError(
+                "You are already a member of this group."
+            )
+
+        if membership.status == GroupMembership.Status.PENDING:
+            raise ValueError(
+                "You already have a pending join request."
+            )
+
+        if membership.status == GroupMembership.Status.LEAVE_REQUESTED:
+            raise ValueError(
+                "You already have a pending leave request."
+            )
+
+        if membership.status == GroupMembership.Status.SUSPENDED:
+            raise ValueError(
+                "Your membership is suspended. Contact the group administrator."
+            )
+
+        if membership.status not in [
+            GroupMembership.Status.LEFT,
+            GroupMembership.Status.REMOVED,
+            GroupMembership.Status.CANCELLED,
+        ]:
+            raise ValueError(
+                "You cannot request to join this group."
+            )
 
     active_members = GroupMembership.objects.filter(
         group=group,
@@ -44,19 +105,54 @@ def add_member(*, user, group):
     ).count()
 
     if active_members >= group.max_members:
-        raise ValueError("Group has reached its maximum number of members.")
+        raise ValueError(
+            "Group has reached its maximum number of members."
+        )
 
-    if GroupMembership.objects.filter(
-        user=user,
-        group=group,
-    ).exists():
-        raise ValueError("User already has a membership in this group.")
+    if membership:
+        membership.role = GroupMembership.Role.MEMBER
+        membership.status = GroupMembership.Status.PENDING
+        membership.joined_at = None
 
-    membership = GroupMembership.objects.create(
+        membership.save(
+            update_fields=[
+                "role",
+                "status",
+                "joined_at",
+                "updated_at",
+            ]
+        )
+
+        return membership
+
+    return GroupMembership.objects.create(
         user=user,
         group=group,
         role=GroupMembership.Role.MEMBER,
         status=GroupMembership.Status.PENDING,
+    )
+
+@transaction.atomic
+def cancel_join_request(*, user, group):
+    membership = GroupMembership.objects.select_for_update().filter(
+        user=user,
+        group=group,
+    ).first()
+
+    if membership is None:
+        raise ValueError(
+            "You do not have a membership request for this group."
+        )
+
+    if membership.status != GroupMembership.Status.PENDING:
+        raise ValueError(
+            "Only pending join requests can be cancelled."
+        )
+
+    membership.status = GroupMembership.Status.CANCELLED
+
+    membership.save(
+        update_fields=["status", "updated_at"]
     )
 
     return membership
@@ -848,3 +944,5 @@ def approve_member_leave(*, membership):
     )
 
     return membership
+
+
