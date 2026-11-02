@@ -7,6 +7,12 @@ User = get_user_model()
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
     password = serializers.CharField( write_only=True, min_length=8,)
+    phone_number = serializers.CharField(
+    max_length=20,
+    required=False,
+    allow_blank=True,
+    allow_null=True,
+)
 
     class Meta:
         model = User
@@ -33,6 +39,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
+    is_profile_complete = serializers.BooleanField(read_only=True)
     class Meta:
         model = User
         fields = [
@@ -45,6 +52,7 @@ class UserSerializer(serializers.ModelSerializer):
             "profile_photo",
             "created_at",
             "updated_at",
+            "is_profile_complete",
         ]
         read_only_fields = [
             "id",
