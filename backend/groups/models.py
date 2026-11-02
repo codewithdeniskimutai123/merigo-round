@@ -15,6 +15,7 @@ class Group(models.Model):
         PAUSED = "PAUSED", "Paused"
         COMPLETED = "COMPLETED", "Completed"
         CANCELLED = "CANCELLED", "Cancelled"
+        ARCHIVED = "ARCHIVED", "Archived"
 
     id = models.BigAutoField(primary_key=True)
     name = models.CharField(max_length=150)
@@ -47,6 +48,7 @@ class GroupMembership(models.Model):
         LEFT = "LEFT", "Left"
         REMOVED = "REMOVED", "Removed"
         SUSPENDED = "SUSPENDED", "Suspended"
+        CANCELLED = "CANCELLED", "Cancelled"
 
     id = models.BigAutoField(primary_key=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="group_memberships")
