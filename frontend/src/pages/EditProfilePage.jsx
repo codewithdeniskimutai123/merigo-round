@@ -1,16 +1,21 @@
 
 import { useEffect, useState, useRef } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
 import {
   useMutation,
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
 import { toast } from 'sonner'
+
 import {
   getCurrentUser,
   updateCurrentUser,
 } from '../api/authApi.js'
+
+import Card from '../components/Card.jsx'
+import Input from '../components/Input.jsx'
+import Button from '../components/Button.jsx'
 
 const emptyForm = {
   first_name: '',
@@ -31,7 +36,6 @@ function getPhotoUrl(photo) {
     return photo
   }
 
-  // Handle paths returned by Django, such as /media/profile_photos/photo.jpg.
   const path = photo.replace(/^\/+/, '')
   return `${API_BASE_URL}/${path}`
 }
@@ -70,12 +74,56 @@ function formatDate(value) {
   return date.toLocaleString()
 }
 
-export default function EditProfilePage() {
-  const navigate = useNavigate()
-  const queryClient = useQueryClient()
-  const fileInputRef = useRef(null)
+function getCompletionStatus(form) {
+  return [
+    {
+      field: 'first_name',
+      label: 'First name',
+      complete: Boolean(form.first_name.trim()),
+    },
+    {
+      field: 'last_name',
+      label: 'Last name',
+      complete: Boolean(form.last_name.trim()),
+    },
+    {
+      field: 'username',
+      label: 'Username',
+      complete: Boolean(form.username.trim()),
+    },
+    {
+      field: 'email',
+      label: 'Email address',
+      complete: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+        form.email.trim(),
+      ),
+    },
+    {
+      field: 'phone_number',
+      label: 'Phone number',
+      complete: Boolean(form.phone_number.trim()),
+    },
+  ]
+}
 
-  // Keep track of the temporary preview URL we create in the browser.
+function FieldStatus({ complete }) {
+  return (
+    <span
+      className={`text-xs font-semibold ${
+        complete ? 'text-green-600' : 'text-red-600'
+      }`}
+    >
+      {complete ? 'Complete' : 'Required'}
+    </span>
+  )
+}
+
+export default function EditProfilePage({ completionMode = false }) {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const queryClient = useQueryClient()
+
+  const fileInputRef = useRef(null)
   const temporaryPhotoUrl = useRef(null)
 
   const [form, setForm] = useState(emptyForm)
@@ -97,7 +145,18 @@ export default function EditProfilePage() {
     refetchOnMount: 'always',
   })
 
-  // Load the latest profile fields and saved photo from Django.
+  const completionStatus = getCompletionStatus(form)
+
+  const completedFields = completionStatus.filter(
+    (field) => field.complete,
+  ).length
+
+  const allFieldsComplete =
+    completedFields === completionStatus.length
+
+  const completionPercentage =
+    (completedFields / completionStatus.length) * 100
+
   useEffect(() => {
     if (!profile) return
 
@@ -109,15 +168,12 @@ export default function EditProfilePage() {
       phone_number: profile.phone_number || '',
     })
 
-    // Never overwrite a newly selected local photo with the saved photo.
     if (!photoFile) {
       setPhotoPreview(getPhotoUrl(profile.profile_photo))
       setPhotoLoadError(false)
     }
   }, [profile, photoFile])
 
-  // Clean up a temporary image URL only when the component unmounts.
-  // Replacing a preview is handled explicitly in handlePhotoChange.
   useEffect(() => {
     return () => {
       if (temporaryPhotoUrl.current) {
@@ -131,13 +187,52 @@ export default function EditProfilePage() {
     mutationFn: updateCurrentUser,
 
     onSuccess: (updatedProfile) => {
-      // Refresh cached profile data for the profile page and other components.
-      queryClient.setQueryData(['currentUser'], updatedProfile)
+      // Django must confirm completion before we declare success.
+      if (
+        completionMode &&
+        updatedProfile.is_profile_complete !== true
+      ) {
+        queryClient.setQueryData(
+          ['currentUser'],
+          updatedProfile,
+        )
 
-      localStorage.setItem('user', JSON.stringify(updatedProfile))
+        localStorage.setItem(
+          'user',
+          JSON.stringify(updatedProfile),
+        )
+
+        window.dispatchEvent(new Event('auth-change'))
+
+        setForm({
+          first_name: updatedProfile.first_name || '',
+          last_name: updatedProfile.last_name || '',
+          username: updatedProfile.username || '',
+          email: updatedProfile.email || '',
+          phone_number: updatedProfile.phone_number || '',
+        })
+
+        setErrors({})
+
+        toast.error(
+          'Your profile is still incomplete. Please check the required information.',
+        )
+
+        return
+      }
+
+      queryClient.setQueryData(
+        ['currentUser'],
+        updatedProfile,
+      )
+
+      localStorage.setItem(
+        'user',
+        JSON.stringify(updatedProfile),
+      )
+
       window.dispatchEvent(new Event('auth-change'))
 
-      // Release the temporary preview before switching to the saved image.
       if (temporaryPhotoUrl.current) {
         URL.revokeObjectURL(temporaryPhotoUrl.current)
         temporaryPhotoUrl.current = null
@@ -149,10 +244,21 @@ export default function EditProfilePage() {
       setErrors({})
       setPhotoError('')
 
-      toast.success('Your profile has been updated.')
+      toast.success(
+        completionMode
+          ? 'Your profile has been completed successfully.'
+          : 'Your profile has been updated.',
+      )
 
-      // Redirect only after Django confirms the update succeeded.
-      navigate('/profile', { replace: true })
+      const destination = location.state?.from
+
+      const redirectPath = completionMode
+        ? destination
+          ? `${destination.pathname}${destination.search || ''}${destination.hash || ''}`
+          : '/dashboard'
+        : '/profile'
+
+      navigate(redirectPath, { replace: true })
     },
 
     onError: (error) => {
@@ -202,7 +308,6 @@ export default function EditProfilePage() {
     const input = event.target
     const file = input.files?.[0]
 
-    // Reset immediately so the same file can be selected again.
     input.value = ''
 
     if (!file) return
@@ -221,7 +326,6 @@ export default function EditProfilePage() {
       return
     }
 
-    // Release the previous temporary URL before creating another one.
     if (temporaryPhotoUrl.current) {
       URL.revokeObjectURL(temporaryPhotoUrl.current)
     }
@@ -245,6 +349,18 @@ export default function EditProfilePage() {
 
     if (updateMutation.isPending) return
 
+    if (completionMode && !allFieldsComplete) {
+      const missingFields = completionStatus
+        .filter((field) => !field.complete)
+        .map((field) => field.label)
+
+      toast.error(
+        `Please complete: ${missingFields.join(', ')}.`,
+      )
+
+      return
+    }
+
     setErrors({})
     setPhotoError('')
 
@@ -265,14 +381,23 @@ export default function EditProfilePage() {
   function handleCancel() {
     if (updateMutation.isPending) return
 
+    if (completionMode) {
+      navigate('/dashboard', { replace: true })
+      return
+    }
+
     navigate(-1)
   }
 
   if (isLoading) {
     return (
-      <main className="min-h-screen bg-page px-4 py-8 text-text">
-        <div className="mx-auto max-w-4xl">
-          Loading your profile...
+      <main className="flex min-h-[60vh] items-center justify-center bg-page px-4 text-text">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-9 w-9 animate-spin rounded-full border-4 border-brand-600 border-t-transparent" />
+
+          <p className="text-sm text-text-muted">
+            Loading your profile...
+          </p>
         </div>
       </main>
     )
@@ -305,305 +430,588 @@ export default function EditProfilePage() {
   return (
     <main className="min-h-screen bg-page text-text transition-colors">
       <div className="mx-auto max-w-4xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
+
+        {/* Page heading */}
         <header>
-          <p className="text-sm font-semibold text-brand-600">
+          <p className="text-sm font-semibold tracking-wide text-brand-600">
             MERIGO ROUND
           </p>
 
           <h1 className="mt-2 text-3xl font-bold">
-            Edit Profile
+            {completionMode ? 'Complete Your Profile' : 'Edit Profile'}
           </h1>
 
           <p className="mt-2 text-sm text-text-muted">
-            Update your personal information and profile photo.
+            {completionMode
+              ? 'Before creating or joining a group, provide the required information below.'
+              : 'Update your personal information and profile photo.'}
           </p>
         </header>
 
-        <section className="rounded-2xl border border-border bg-surface p-5 shadow-sm sm:p-8">
-          <div className="mb-7 border-b border-border pb-5">
-            <h2 className="text-xl font-semibold">
-              Personal information
-            </h2>
+        {/* Complete profile mode */}
+        {completionMode && (
+          <Card className="space-y-6 sm:p-8">
 
-            <p className="mt-2 text-sm text-text-muted">
-              Keep your contact details up to date.
-            </p>
-          </div>
-
-          {errors.general && (
-            <p role="alert" className="mb-4 text-sm text-red-600">
-              {errors.general}
-            </p>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Profile photo */}
-            <div>
-              <label
-                htmlFor="profilePhoto"
-                className="mb-3 block text-sm font-medium"
-              >
-                Profile photo
-              </label>
-
-              <div className="flex flex-wrap items-center gap-5">
-                {photoPreview && !photoLoadError ? (
-                  <img
-                    key={photoPreview}
-                    src={photoPreview}
-                    alt="Profile preview"
-                    onLoad={() => setPhotoLoadError(false)}
-                    onError={() => {
-                      console.error(
-                        'Profile photo failed to load:',
-                        photoPreview,
-                      )
-                      setPhotoLoadError(true)
-                    }}
-                    className="h-24 w-24 shrink-0 rounded-full border border-border bg-page object-cover"
-                  />
-                ) : (
-                  <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-full border border-border bg-page px-2 text-center text-sm text-text-muted">
-                    {photoPreview ? 'Photo unavailable' : 'No photo'}
-                  </div>
-                )}
-
-                <div className="min-w-0 flex-1">
-                  <input
-                    ref={fileInputRef}
-                    id="profilePhoto"
-                    name="profile_photo"
-                    type="file"
-                    accept="image/*"
-                    onChange={handlePhotoChange}
-                    disabled={updateMutation.isPending}
-                    className="peer sr-only"
-                    aria-describedby="profilePhotoHelp"
-                  />
-
-                  <label
-                    htmlFor="profilePhoto"
-                    onClick={(event) => {
-                      if (updateMutation.isPending) {
-                        event.preventDefault()
-                        return
-                      }
-
-                      // Open the file chooser explicitly for reliable reuse.
-                      event.preventDefault()
-                      fileInputRef.current?.click()
-                    }}
-                    className="inline-flex min-h-12 cursor-pointer select-none items-center justify-center rounded-xl border-2 border-brand-600 bg-brand-600 px-5 py-3 text-sm font-bold text-white shadow-sm transition-all duration-200 ease-in-out hover:-translate-y-0.5 hover:border-brand-700 hover:bg-brand-700 hover:shadow-lg active:translate-y-0 active:scale-95 active:shadow-sm peer-focus-visible:outline-none peer-focus-visible:ring-4 peer-focus-visible:ring-brand-600/30 peer-disabled:pointer-events-none peer-disabled:opacity-50"
-                  >
-                    {photoFile
-                      ? 'Choose another photo'
-                      : 'Choose profile photo'}
-                  </label>
-
-                  <p
-                    id="profilePhotoHelp"
-                    className="mt-2 break-words text-xs text-text-muted"
-                  >
-                    {photoFile
-                      ? `Selected: ${photoFile.name}`
-                      : 'Choose an image up to 5 MB.'}
-                  </p>
-
-                  {photoError && (
-                    <p role="alert" className="mt-2 text-sm text-red-600">
-                      {photoError}
-                    </p>
-                  )}
-
-                  {errors.profile_photo && !photoError && (
-                    <p role="alert" className="mt-2 text-sm text-red-600">
-                      {errors.profile_photo}
-                    </p>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Editable personal information */}
-            <div className="grid gap-5 sm:grid-cols-2">
-              <div>
-                <label
-                  htmlFor="first_name"
-                  className="mb-2 block text-sm font-medium"
-                >
-                  First name
-                </label>
-
-                <input
-                  id="first_name"
-                  name="first_name"
-                  value={form.first_name}
-                  onChange={handleChange}
-                  className="w-full rounded-xl border border-border bg-page px-4 py-3 text-text outline-none transition focus:border-brand-600 focus:ring-2 focus:ring-brand-600/20"
-                />
-
-                {errors.first_name && (
-                  <p className="mt-1 text-sm text-red-600">
-                    {errors.first_name}
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <label
-                  htmlFor="last_name"
-                  className="mb-2 block text-sm font-medium"
-                >
-                  Last name
-                </label>
-
-                <input
-                  id="last_name"
-                  name="last_name"
-                  value={form.last_name}
-                  onChange={handleChange}
-                  className="w-full rounded-xl border border-border bg-page px-4 py-3 text-text outline-none transition focus:border-brand-600 focus:ring-2 focus:ring-brand-600/20"
-                />
-
-                {errors.last_name && (
-                  <p className="mt-1 text-sm text-red-600">
-                    {errors.last_name}
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <label
-                  htmlFor="username"
-                  className="mb-2 block text-sm font-medium"
-                >
-                  Username
-                </label>
-
-                <input
-                  id="username"
-                  name="username"
-                  value={form.username}
-                  readOnly
-                  className="w-full cursor-not-allowed rounded-xl border border-border bg-page px-4 py-3 text-text-muted"
-                />
-
-                <p className="mt-1 text-xs text-text-muted">
-                  Your username cannot be changed here.
-                </p>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="email"
-                  className="mb-2 block text-sm font-medium"
-                >
-                  Email address
-                </label>
-
-                <input
-                  id="email"
-                  name="email"
-                  type="email"
-                  value={form.email}
-                  onChange={handleChange}
-                  required
-                  className="w-full rounded-xl border border-border bg-page px-4 py-3 text-text outline-none transition focus:border-brand-600 focus:ring-2 focus:ring-brand-600/20"
-                />
-
-                {errors.email && (
-                  <p className="mt-1 text-sm text-red-600">
-                    {errors.email}
-                  </p>
-                )}
-              </div>
-
-              <div className="sm:col-span-2">
-                <label
-                  htmlFor="phone_number"
-                  className="mb-2 block text-sm font-medium"
-                >
-                  Phone number
-                </label>
-
-                <input
-                  id="phone_number"
-                  name="phone_number"
-                  type="tel"
-                  value={form.phone_number}
-                  onChange={handleChange}
-                  required
-                  className="w-full rounded-xl border border-border bg-page px-4 py-3 text-text outline-none transition focus:border-brand-600 focus:ring-2 focus:ring-brand-600/20"
-                />
-
-                {errors.phone_number && (
-                  <p className="mt-1 text-sm text-red-600">
-                    {errors.phone_number}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* Account information */}
-            <div className="border-t border-border pt-6">
-              <h2 className="text-xl font-semibold">
-                Account information
+            {/* Completion requirements */}
+            <div className="rounded-xl border border-red-600/20 bg-red-600/5 p-4">
+              <h2 className="font-semibold text-red-600">
+                Profile completion requirements
               </h2>
 
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <div>
-                  <p className="text-sm text-text-muted">Account ID</p>
-                  <p className="mt-1 font-medium">
-                    {profile?.id ?? 'Not available'}
-                  </p>
-                </div>
+              <p className="mt-2 text-sm leading-relaxed text-text-muted">
+                A complete profile must contain your first name,
+                last name, registered username, valid email address
+                and active phone number. All five details are required
+                before you can create or join a group.
+              </p>
 
-                <div>
-                  <p className="text-sm text-text-muted">Date created</p>
-                  <p className="mt-1 font-medium">
-                    {formatDate(profile?.created_at)}
-                  </p>
-                </div>
+              <p className="mt-2 text-sm text-text-muted">
+                Your profile photo is optional and is not required
+                for profile completion.
+              </p>
+            </div>
 
-                <div>
-                  <p className="text-sm text-text-muted">Last updated</p>
-                  <p className="mt-1 font-medium">
-                    {formatDate(profile?.updated_at)}
-                  </p>
-                </div>
+            {/* Completion progress */}
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="font-semibold">
+                  Your completion progress
+                </h2>
+
+                <span className="text-sm font-bold text-brand-600">
+                  {completedFields} of {completionStatus.length} completed
+                </span>
+              </div>
+
+              <div
+                className="h-2.5 overflow-hidden rounded-full bg-page"
+                role="progressbar"
+                aria-label="Profile completion progress"
+                aria-valuemin={0}
+                aria-valuemax={completionStatus.length}
+                aria-valuenow={completedFields}
+              >
+                <div
+                  className="h-full rounded-full bg-brand-600 transition-all duration-300"
+                  style={{ width: `${completionPercentage}%` }}
+                />
+              </div>
+
+              <div className="space-y-2">
+                {completionStatus.map((field) => (
+                  <div
+                    key={field.field}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5"
+                  >
+                    <span className="text-sm font-medium">
+                      {field.label}
+                    </span>
+
+                    <FieldStatus complete={field.complete} />
+                  </div>
+                ))}
               </div>
             </div>
 
-            {/* Actions */}
-            <div className="flex flex-wrap gap-3 border-t border-border pt-6">
-              <button
-                type="submit"
-                disabled={updateMutation.isPending}
-                className="rounded-xl bg-brand-600 px-6 py-3 font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-brand-700 hover:shadow-md active:translate-y-0 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {updateMutation.isPending
-                  ? 'Saving changes...'
-                  : 'Save changes'}
-              </button>
+            {/* Required information */}
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <div className="grid gap-5 sm:grid-cols-2">
 
-              <button
-                type="button"
-                onClick={handleCancel}
-                disabled={updateMutation.isPending}
-                className="rounded-xl border border-border px-6 py-3 font-semibold transition-all duration-200 hover:border-brand-600 hover:bg-brand-600/10 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Cancel
-              </button>
+                {/* First name */}
+                <div>
+                  <div className="mb-1 flex justify-end">
+                    <FieldStatus
+                      complete={completionStatus.find(
+                        (field) => field.field === 'first_name',
+                      ).complete}
+                    />
+                  </div>
 
-              <Link
-                to="/change-password"
-                className="rounded-xl px-4 py-3 font-semibold text-brand-600 transition-colors hover:bg-brand-600/10 hover:underline"
-              >
-                Change password
-              </Link>
+                  <Input
+                    id="first_name"
+                    label="First name"
+                    value={form.first_name}
+                    onChange={handleChange}
+                    required
+                    disabled={updateMutation.isPending}
+                    error={
+                      errors.first_name ||
+                      (!form.first_name.trim()
+                        ? 'Your first name is required.'
+                        : '')
+                    }
+                    placeholder="Enter your first name"
+                  />
+                </div>
+
+                {/* Last name */}
+                <div>
+                  <div className="mb-1 flex justify-end">
+                    <FieldStatus
+                      complete={completionStatus.find(
+                        (field) => field.field === 'last_name',
+                      ).complete}
+                    />
+                  </div>
+
+                  <Input
+                    id="last_name"
+                    label="Last name"
+                    value={form.last_name}
+                    onChange={handleChange}
+                    required
+                    disabled={updateMutation.isPending}
+                    error={
+                      errors.last_name ||
+                      (!form.last_name.trim()
+                        ? 'Your last name is required.'
+                        : '')
+                    }
+                    placeholder="Enter your last name"
+                  />
+                </div>
+
+                {/* Username */}
+                <div>
+                  <div className="mb-1 flex justify-end">
+                    <FieldStatus
+                      complete={completionStatus.find(
+                        (field) => field.field === 'username',
+                      ).complete}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label
+                      htmlFor="username"
+                      className="block text-sm font-medium text-text"
+                    >
+                      Username
+                    </label>
+
+                    <input
+                      id="username"
+                      name="username"
+                      value={form.username}
+                      readOnly
+                      aria-invalid={!form.username.trim()}
+                      className="w-full cursor-not-allowed rounded-lg border border-border bg-page px-3 py-2 text-text-muted"
+                    />
+
+                    {!form.username.trim() ? (
+                      <p className="text-sm text-red-600">
+                        A registered username is required.
+                      </p>
+                    ) : (
+                      <p className="text-xs text-text-muted">
+                        Your registered username is already associated
+                        with your account and cannot be changed here.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Email */}
+                <div>
+                  <div className="mb-1 flex justify-end">
+                    <FieldStatus
+                      complete={completionStatus.find(
+                        (field) => field.field === 'email',
+                      ).complete}
+                    />
+                  </div>
+
+                  <Input
+                    id="email"
+                    label="Email address"
+                    type="email"
+                    value={form.email}
+                    onChange={handleChange}
+                    required
+                    disabled={updateMutation.isPending}
+                    error={
+                      errors.email ||
+                      (!form.email.trim()
+                        ? 'A valid email address is required.'
+                        : !completionStatus.find(
+                            (field) => field.field === 'email',
+                          ).complete
+                          ? 'Please enter a valid email address.'
+                          : '')
+                    }
+                    placeholder="Enter your email address"
+                  />
+                </div>
+
+                {/* Phone number */}
+                <div className="sm:col-span-2">
+                  <div className="mb-1 flex justify-end">
+                    <FieldStatus
+                      complete={completionStatus.find(
+                        (field) => field.field === 'phone_number',
+                      ).complete}
+                    />
+                  </div>
+
+                  <Input
+                    id="phone_number"
+                    label="Phone number"
+                    type="tel"
+                    value={form.phone_number}
+                    onChange={handleChange}
+                    required
+                    disabled={updateMutation.isPending}
+                    error={
+                      errors.phone_number ||
+                      (!form.phone_number.trim()
+                        ? 'An active phone number is required.'
+                        : '')
+                    }
+                    placeholder="Enter your active phone number"
+                  />
+                </div>
+              </div>
+
+              {errors.general && (
+                <p role="alert" className="text-sm text-red-600">
+                  {errors.general}
+                </p>
+              )}
+
+              {!allFieldsComplete && (
+                <div className="rounded-lg border border-red-600/20 bg-red-600/5 p-3">
+                  <p className="text-sm text-red-600">
+                    Complete all required fields above to submit your profile.
+                  </p>
+                </div>
+              )}
+
+              {/* Completion actions */}
+              <div className="flex flex-wrap gap-3 border-t border-border pt-5">
+                <Button
+                  type="submit"
+                  disabled={
+                    updateMutation.isPending ||
+                    !allFieldsComplete
+                  }
+                >
+                  {updateMutation.isPending ? (
+                    <span className="flex items-center gap-2">
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                      Saving profile...
+                    </span>
+                  ) : allFieldsComplete ? (
+                    'Complete profile'
+                  ) : (
+                    'Complete the required fields'
+                  )}
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={handleCancel}
+                  disabled={updateMutation.isPending}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          </Card>
+        )}
+
+        {/* Normal edit profile mode */}
+        {!completionMode && (
+          <section className="rounded-2xl border border-border bg-surface p-5 shadow-sm sm:p-8">
+            <div className="mb-7 border-b border-border pb-5">
+              <h2 className="text-xl font-semibold">
+                Personal information
+              </h2>
+
+              <p className="mt-2 text-sm text-text-muted">
+                Keep your contact details up to date.
+              </p>
             </div>
-          </form>
-        </section>
+
+            {errors.general && (
+              <p role="alert" className="mb-4 text-sm text-red-600">
+                {errors.general}
+              </p>
+            )}
+
+            <form onSubmit={handleSubmit} className="space-y-6">
+
+              {/* Profile photo */}
+              <div>
+                <label
+                  htmlFor="profilePhoto"
+                  className="mb-3 block text-sm font-medium"
+                >
+                  Profile photo
+                </label>
+
+                <div className="flex flex-wrap items-center gap-5">
+                  {photoPreview && !photoLoadError ? (
+                    <img
+                      key={photoPreview}
+                      src={photoPreview}
+                      alt="Profile preview"
+                      onLoad={() => setPhotoLoadError(false)}
+                      onError={() => {
+                        console.error(
+                          'Profile photo failed to load:',
+                          photoPreview,
+                        )
+                        setPhotoLoadError(true)
+                      }}
+                      className="h-24 w-24 shrink-0 rounded-full border border-border bg-page object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-full border border-border bg-page px-2 text-center text-sm text-text-muted">
+                      {photoPreview ? 'Photo unavailable' : 'No photo'}
+                    </div>
+                  )}
+
+                  <div className="min-w-0 flex-1">
+                    <input
+                      ref={fileInputRef}
+                      id="profilePhoto"
+                      name="profile_photo"
+                      type="file"
+                      accept="image/*"
+                      onChange={handlePhotoChange}
+                      disabled={updateMutation.isPending}
+                      className="peer sr-only"
+                      aria-describedby="profilePhotoHelp"
+                    />
+
+                    <label
+                      htmlFor="profilePhoto"
+                      onClick={(event) => {
+                        if (updateMutation.isPending) {
+                          event.preventDefault()
+                          return
+                        }
+
+                        event.preventDefault()
+                        fileInputRef.current?.click()
+                      }}
+                      className="inline-flex min-h-12 cursor-pointer select-none items-center justify-center rounded-xl border-2 border-brand-600 bg-brand-600 px-5 py-3 text-sm font-bold text-white shadow-sm transition-all duration-200 ease-in-out hover:-translate-y-0.5 hover:border-brand-700 hover:bg-brand-700 hover:shadow-lg active:translate-y-0 active:scale-95 active:shadow-sm peer-focus-visible:outline-none peer-focus-visible:ring-4 peer-focus-visible:ring-brand-600/30 peer-disabled:pointer-events-none peer-disabled:opacity-50"
+                    >
+                      {photoFile
+                        ? 'Choose another photo'
+                        : 'Choose profile photo'}
+                    </label>
+
+                    <p
+                      id="profilePhotoHelp"
+                      className="mt-2 break-words text-xs text-text-muted"
+                    >
+                      {photoFile
+                        ? `Selected: ${photoFile.name}`
+                        : 'Choose an image up to 5 MB.'}
+                    </p>
+
+                    {photoError && (
+                      <p role="alert" className="mt-2 text-sm text-red-600">
+                        {photoError}
+                      </p>
+                    )}
+
+                    {errors.profile_photo && !photoError && (
+                      <p role="alert" className="mt-2 text-sm text-red-600">
+                        {errors.profile_photo}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Editable personal information */}
+              <div className="grid gap-5 sm:grid-cols-2">
+                <div>
+                  <label
+                    htmlFor="first_name"
+                    className="mb-2 block text-sm font-medium"
+                  >
+                    First name
+                  </label>
+
+                  <input
+                    id="first_name"
+                    name="first_name"
+                    value={form.first_name}
+                    onChange={handleChange}
+                    disabled={updateMutation.isPending}
+                    className="w-full rounded-xl border border-border bg-page px-4 py-3 text-text outline-none transition focus:border-brand-600 focus:ring-2 focus:ring-brand-600/20"
+                  />
+
+                  {errors.first_name && (
+                    <p className="mt-1 text-sm text-red-600">
+                      {errors.first_name}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="last_name"
+                    className="mb-2 block text-sm font-medium"
+                  >
+                    Last name
+                  </label>
+
+                  <input
+                    id="last_name"
+                    name="last_name"
+                    value={form.last_name}
+                    onChange={handleChange}
+                    disabled={updateMutation.isPending}
+                    className="w-full rounded-xl border border-border bg-page px-4 py-3 text-text outline-none transition focus:border-brand-600 focus:ring-2 focus:ring-brand-600/20"
+                  />
+
+                  {errors.last_name && (
+                    <p className="mt-1 text-sm text-red-600">
+                      {errors.last_name}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="username"
+                    className="mb-2 block text-sm font-medium"
+                  >
+                    Username
+                  </label>
+
+                  <input
+                    id="username"
+                    name="username"
+                    value={form.username}
+                    readOnly
+                    className="w-full cursor-not-allowed rounded-xl border border-border bg-page px-4 py-3 text-text-muted"
+                  />
+
+                  <p className="mt-1 text-xs text-text-muted">
+                    Your username cannot be changed here.
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="email"
+                    className="mb-2 block text-sm font-medium"
+                  >
+                    Email address
+                  </label>
+
+                  <input
+                    id="email"
+                    name="email"
+                    type="email"
+                    value={form.email}
+                    onChange={handleChange}
+                    disabled={updateMutation.isPending}
+                    required
+                    className="w-full rounded-xl border border-border bg-page px-4 py-3 text-text outline-none transition focus:border-brand-600 focus:ring-2 focus:ring-brand-600/20"
+                  />
+
+                  {errors.email && (
+                    <p className="mt-1 text-sm text-red-600">
+                      {errors.email}
+                    </p>
+                  )}
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label
+                    htmlFor="phone_number"
+                    className="mb-2 block text-sm font-medium"
+                  >
+                    Phone number
+                  </label>
+
+                  <input
+                    id="phone_number"
+                    name="phone_number"
+                    type="tel"
+                    value={form.phone_number}
+                    onChange={handleChange}
+                    disabled={updateMutation.isPending}
+                    required
+                    className="w-full rounded-xl border border-border bg-page px-4 py-3 text-text outline-none transition focus:border-brand-600 focus:ring-2 focus:ring-brand-600/20"
+                  />
+
+                  {errors.phone_number && (
+                    <p className="mt-1 text-sm text-red-600">
+                      {errors.phone_number}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Account information */}
+              <div className="border-t border-border pt-6">
+                <h2 className="text-xl font-semibold">
+                  Account information
+                </h2>
+
+                <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <p className="text-sm text-text-muted">Account ID</p>
+                    <p className="mt-1 font-medium">
+                      {profile?.id ?? 'Not available'}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-sm text-text-muted">Date created</p>
+                    <p className="mt-1 font-medium">
+                      {formatDate(profile?.created_at)}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-sm text-text-muted">Last updated</p>
+                    <p className="mt-1 font-medium">
+                      {formatDate(profile?.updated_at)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex flex-wrap gap-3 border-t border-border pt-6">
+                <button
+                  type="submit"
+                  disabled={updateMutation.isPending}
+                  className="rounded-xl bg-brand-600 px-6 py-3 font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-brand-700 hover:shadow-md active:translate-y-0 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {updateMutation.isPending
+                    ? 'Saving changes...'
+                    : 'Save changes'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  disabled={updateMutation.isPending}
+                  className="rounded-xl border border-border px-6 py-3 font-semibold transition-all duration-200 hover:border-brand-600 hover:bg-brand-600/10 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+
+                <Link
+                  to="/change-password"
+                  className="rounded-xl px-4 py-3 font-semibold text-brand-600 transition-colors hover:bg-brand-600/10 hover:underline"
+                >
+                  Change password
+                </Link>
+              </div>
+            </form>
+          </section>
+        )}
       </div>
     </main>
   )
