@@ -1,5 +1,6 @@
+
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { GoogleLogin } from '@react-oauth/google'
 import { toast } from 'sonner'
 
@@ -21,7 +22,13 @@ export default function LoginPage() {
   })
 
   const navigate = useNavigate()
+  const location = useLocation()
   const loginMutation = useLogin()
+
+  // Return users to the page they originally wanted to access.
+  const redirectTo = location.state?.from
+    ? `${location.state.from.pathname}${location.state.from.search || ''}${location.state.from.hash || ''}`
+    : '/dashboard'
 
   const isSigningIn = loginMutation.isPending || googleLoading
 
@@ -50,8 +57,9 @@ export default function LoginPage() {
       },
       {
         onSuccess: () => {
-          navigate('/dashboard', { replace: true })
+          navigate(redirectTo, { replace: true })
         },
+
         onError: (error) => {
           const status = error.response?.status
           const data = error.response?.data
@@ -129,7 +137,8 @@ export default function LoginPage() {
       window.dispatchEvent(new Event('auth-change'))
 
       toast.success('Signed in with Google successfully.')
-      navigate('/dashboard', { replace: true })
+
+      navigate(redirectTo, { replace: true })
     } catch (error) {
       console.error('Google sign-in failed:', error)
 
@@ -179,39 +188,25 @@ export default function LoginPage() {
                 placeholder="Enter your username"
                 value={username}
                 onChange={handleUsernameChange}
-                invalid={Boolean(errors.username)}
+                error={errors.username}
                 required
                 disabled={isSigningIn}
               />
-
-              {errors.username && (
-                <p role="alert" className="mt-1.5 text-sm text-red-600">
-                  {errors.username}
-                </p>
-              )}
             </div>
 
             <div className="space-y-2">
-              <div>
-                <Input
-                  id="password"
-                  name="password"
-                  label="Password"
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="Enter your password"
-                  value={password}
-                  onChange={handlePasswordChange}
-                  invalid={Boolean(errors.password)}
-                  required
-                  disabled={isSigningIn}
-                />
-
-                {errors.password && (
-                  <p role="alert" className="mt-1.5 text-sm text-red-600">
-                    {errors.password}
-                  </p>
-                )}
-              </div>
+              <Input
+                id="password"
+                name="password"
+                label="Password"
+                type={showPassword ? 'text' : 'password'}
+                placeholder="Enter your password"
+                value={password}
+                onChange={handlePasswordChange}
+                error={errors.password}
+                required
+                disabled={isSigningIn}
+              />
 
               <div className="flex flex-wrap justify-between gap-3">
                 <button
