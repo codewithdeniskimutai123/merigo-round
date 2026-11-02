@@ -84,6 +84,10 @@ export default function PageLayout({
               Home
             </NavLink>
 
+            <NavLink to="/groups/create" className={getNavLinkClass}>
+                Create a group
+              </NavLink>
+
             {isLoggedIn ? (
               <>
                 <NavLink
