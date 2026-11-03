@@ -1,4 +1,3 @@
-
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
@@ -6,11 +5,15 @@ import {
   getGroups,
   getGroupById,
   createGroup,
+  updateGroup,
+  deleteGroup,
   getGroupMembers,
   requestToJoinGroup,
   cancelGroupJoinRequest,
   getPendingGroupMembers,
   approveGroupMember,
+  rejectGroupMember,
+  getMyGroupMembershipHistory,
 } from '../api/groupApi'
 
 function getErrorMessage(error, fallback) {
@@ -59,6 +62,58 @@ export function useCreateGroup() {
     onError: (error) => {
       toast.error(
         getErrorMessage(error, 'Unable to create group. Please try again.'),
+      )
+    },
+  })
+}
+
+export function useUpdateGroup(groupId) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (groupData) => updateGroup(groupId, groupData),
+
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ['group', groupId],
+      })
+
+      queryClient.invalidateQueries({
+        queryKey: ['groups'],
+      })
+
+      toast.success('Group details updated successfully.')
+    },
+
+    onError: (error) => {
+      toast.error(
+        getErrorMessage(error, 'Unable to update group details.'),
+      )
+    },
+  })
+}
+
+export function useDeleteGroup(groupId) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: () => deleteGroup(groupId),
+
+    onSuccess: () => {
+      queryClient.removeQueries({
+        queryKey: ['group', groupId],
+      })
+
+      queryClient.invalidateQueries({
+        queryKey: ['groups'],
+      })
+
+      toast.success('Group deleted successfully.')
+    },
+
+    onError: (error) => {
+      toast.error(
+        getErrorMessage(error, 'Unable to delete this group.'),
       )
     },
   })
@@ -164,5 +219,44 @@ export function useApproveGroupMember(groupId) {
         getErrorMessage(error, 'Unable to approve this member.'),
       )
     },
+  })
+}
+
+export function useRejectGroupMember(groupId) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ membershipId, reason }) =>
+      rejectGroupMember(groupId, membershipId, reason),
+
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ['group', groupId],
+      })
+
+      queryClient.invalidateQueries({
+        queryKey: ['group', groupId, 'pending-members'],
+      })
+
+      queryClient.invalidateQueries({
+        queryKey: ['groups'],
+      })
+
+      toast.success('Membership request rejected successfully.')
+    },
+
+    onError: (error) => {
+      toast.error(
+        getErrorMessage(error, 'Unable to reject this membership request.'),
+      )
+    },
+  })
+}
+
+export function useMyGroupMembershipHistory(groupId) {
+  return useQuery({
+    queryKey: ['group', groupId, 'my-membership-history'],
+    queryFn: () => getMyGroupMembershipHistory(groupId),
+    enabled: !!groupId,
   })
 }
