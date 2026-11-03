@@ -1,9 +1,13 @@
-
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { toast } from 'sonner'
 
+import { getCurrentUser } from '../api/authApi.js'
 import Card from '../components/Card.jsx'
 import Button from '../components/Button.jsx'
+import Input from '../components/Input.jsx'
+import GroupForm from '../components/GroupForm.jsx'
+
 import {
   useGroup,
   useGroupMembers,
@@ -11,6 +15,10 @@ import {
   useRequestToJoinGroup,
   useCancelGroupJoinRequest,
   useApproveGroupMember,
+  useRejectGroupMember,
+  useMyGroupMembershipHistory,
+  useUpdateGroup,
+  useDeleteGroup,
 } from '../hooks/useGroups.js'
 
 const sections = [
@@ -70,6 +78,24 @@ function formatDate(date) {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
+  })
+}
+
+function formatHistoryDate(date) {
+  if (!date) return 'Date unavailable'
+
+  const parsedDate = new Date(date)
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return 'Date unavailable'
+  }
+
+  return parsedDate.toLocaleString('en-KE', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
   })
 }
 
@@ -173,7 +199,36 @@ function MemberCard({ member }) {
   )
 }
 
-function PendingMemberCard({ member, onApprove, approving }) {
+function PendingMemberCard({
+  member,
+  onApprove,
+  onReject,
+  approving,
+  rejecting,
+}) {
+  const [reason, setReason] = useState('')
+  const [reasonError, setReasonError] = useState('')
+
+  const isBusy = approving || rejecting
+
+  async function handleReject() {
+    const trimmedReason = reason.trim()
+
+    if (!trimmedReason) {
+      setReasonError('Please provide a reason for rejecting this request.')
+      return
+    }
+
+    setReasonError('')
+
+    try {
+      await onReject(trimmedReason)
+      setReason('')
+    } catch {
+      // The mutation hook displays the API error notification.
+    }
+  }
+
   return (
     <article className="rounded-xl border border-border bg-surface p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -211,13 +266,39 @@ function PendingMemberCard({ member, onApprove, approving }) {
           </div>
         )}
 
-        <div className="pt-3">
-          <Button
-            onClick={onApprove}
-            disabled={approving}
-          >
+        <div className="space-y-3 pt-3">
+          <Button onClick={onApprove} disabled={isBusy}>
             {approving ? 'Approving...' : 'Approve member'}
           </Button>
+
+          <div className="border-t border-border pt-3">
+            <Input
+              label="Reason for rejection"
+              id={`rejection-reason-${member.id}`}
+              placeholder="Explain why this request is being rejected"
+              value={reason}
+              onChange={(event) => {
+                setReason(event.target.value)
+
+                if (reasonError) {
+                  setReasonError('')
+                }
+              }}
+              error={reasonError}
+              required
+              disabled={isBusy}
+            />
+
+            <div className="mt-3">
+              <Button
+                variant="danger"
+                onClick={handleReject}
+                disabled={isBusy}
+              >
+                {rejecting ? 'Rejecting...' : 'Reject request'}
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
     </article>
@@ -226,7 +307,13 @@ function PendingMemberCard({ member, onApprove, approving }) {
 
 export default function GroupWorkspace() {
   const { id } = useParams()
+  const navigate = useNavigate()
+  const location = useLocation()
+
   const [activeSection, setActiveSection] = useState('overview')
+  const [checkingProfile, setCheckingProfile] = useState(false)
+  const [showEditForm, setShowEditForm] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   const {
     data: group,
@@ -246,6 +333,8 @@ export default function GroupWorkspace() {
 
   const isAdmin =
     membershipStatus === 'ACTIVE' && membershipRole === 'ADMIN'
+
+  const canManageDraftGroup = isAdmin && group?.status === 'DRAFT'
 
   const canViewMemberDirectory = membershipStatus === 'ACTIVE'
 
@@ -267,9 +356,81 @@ export default function GroupWorkspace() {
     isFetching: pendingMembersFetching,
   } = usePendingGroupMembers(id, isAdmin)
 
+  const {
+    data: membershipHistory,
+    isLoading: membershipHistoryLoading,
+  } = useMyGroupMembershipHistory(id)
+
   const requestJoinMutation = useRequestToJoinGroup(id)
   const cancelJoinMutation = useCancelGroupJoinRequest(id)
   const approveMemberMutation = useApproveGroupMember(id)
+  const rejectMemberMutation = useRejectGroupMember(id)
+
+  const updateGroupMutation = useUpdateGroup(id)
+  const deleteGroupMutation = useDeleteGroup(id)
+
+  const history = membershipHistory?.history || []
+
+  const latestRejection = history.find(
+    (item) => item.new_status === 'REJECTED',
+  )
+
+  async function handleRequestToJoin() {
+    if (checkingProfile || requestJoinMutation.isPending) return
+
+    setCheckingProfile(true)
+
+    try {
+      const currentUser = await getCurrentUser()
+
+      if (currentUser.is_profile_complete !== true) {
+        navigate('/complete-profile', {
+          state: {
+            from: {
+              pathname: location.pathname,
+              search: location.search,
+              hash: location.hash,
+            },
+            action: {
+              type: 'JOIN_GROUP',
+              groupId: Number(id),
+            },
+          },
+        })
+
+        return
+      }
+
+      requestJoinMutation.mutate()
+    } catch (error) {
+      toast.error(
+        error.response?.data?.detail ||
+          'Unable to verify your profile. Please try again.',
+      )
+    } finally {
+      setCheckingProfile(false)
+    }
+  }
+
+  function handleUpdateGroup(groupData) {
+    if (!canManageDraftGroup) return
+
+    updateGroupMutation.mutate(groupData, {
+      onSuccess: () => {
+        setShowEditForm(false)
+      },
+    })
+  }
+
+  function handleDeleteGroup() {
+    if (!canManageDraftGroup || deleteGroupMutation.isPending) return
+
+    deleteGroupMutation.mutate(undefined, {
+      onSuccess: () => {
+        navigate('/dashboard')
+      },
+    })
+  }
 
   if (isLoading) {
     return <LoadingState />
@@ -289,10 +450,7 @@ export default function GroupWorkspace() {
       >
         <div className="flex flex-wrap gap-3">
           {!isNotFound && (
-            <Button
-              onClick={() => refetch()}
-              disabled={isFetching}
-            >
+            <Button onClick={() => refetch()} disabled={isFetching}>
               {isFetching ? 'Trying again...' : 'Try again'}
             </Button>
           )}
@@ -311,11 +469,14 @@ export default function GroupWorkspace() {
   if (!group) return null
 
   const isPending = membershipStatus === 'PENDING'
+  const isRejected = membershipStatus === 'REJECTED'
   const isActiveGroup = group.status === 'ACTIVE'
 
   const canRequestMembership =
     !membershipStatus ||
-    ['LEFT', 'REMOVED', 'CANCELLED'].includes(membershipStatus)
+    ['LEFT', 'REMOVED', 'CANCELLED', 'REJECTED'].includes(
+      membershipStatus,
+    )
 
   const visibleSections = isMember
     ? sections
@@ -377,6 +538,12 @@ export default function GroupWorkspace() {
             </span>
           )}
 
+          {isRejected && (
+            <span className="rounded-lg border border-white/30 px-4 py-3 text-sm font-semibold">
+              Membership request rejected
+            </span>
+          )}
+
           {!membershipStatus && (
             <span className="rounded-lg border border-white/30 px-4 py-3 text-sm font-semibold">
               Group information
@@ -390,7 +557,7 @@ export default function GroupWorkspace() {
           </p>
         )}
 
-        {!isMember && !isPending && (
+        {!isMember && !isPending && !isRejected && (
           <p className="mt-4 text-sm text-white/80">
             You are viewing the public group information. Membership is
             required to access the group's activities and financial records.
@@ -544,6 +711,62 @@ export default function GroupWorkspace() {
                       : 'Cancel membership request'}
                   </Button>
                 </div>
+              ) : isRejected ? (
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/30">
+                    <p className="font-semibold text-red-800 dark:text-red-300">
+                      Your membership request was rejected.
+                    </p>
+
+                    {membershipHistoryLoading ? (
+                      <p className="mt-2 text-sm text-red-700 dark:text-red-200">
+                        Loading the administrator's feedback...
+                      </p>
+                    ) : latestRejection ? (
+                      <>
+                        <p className="mt-3 text-sm font-semibold text-red-800 dark:text-red-300">
+                          Reason provided by the administrator
+                        </p>
+
+                        <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-red-700 dark:text-red-200">
+                          {latestRejection.reason ||
+                            'No rejection reason was provided.'}
+                        </p>
+
+                        <p className="mt-3 text-xs text-red-700/80 dark:text-red-300/80">
+                          Rejected on:{' '}
+                          {formatHistoryDate(latestRejection.created_at)}
+                        </p>
+                      </>
+                    ) : (
+                      <p className="mt-2 text-sm text-red-700 dark:text-red-200">
+                        The rejection details are currently unavailable.
+                      </p>
+                    )}
+                  </div>
+
+                  <p className="text-sm text-text-muted">
+                    You may submit another membership request if this group
+                    is still active and accepting new members.
+                  </p>
+
+                  <Button
+                    onClick={handleRequestToJoin}
+                    disabled={
+                      !isActiveGroup ||
+                      checkingProfile ||
+                      requestJoinMutation.isPending
+                    }
+                  >
+                    {checkingProfile
+                      ? 'Checking profile...'
+                      : requestJoinMutation.isPending
+                        ? 'Submitting request...'
+                        : isActiveGroup
+                          ? 'Request to join again'
+                          : 'Group not accepting members'}
+                  </Button>
+                </div>
               ) : canRequestMembership ? (
                 <div className="space-y-3">
                   <p className="text-sm text-text-muted">
@@ -552,16 +775,20 @@ export default function GroupWorkspace() {
                   </p>
 
                   <Button
-                    onClick={() => requestJoinMutation.mutate()}
+                    onClick={handleRequestToJoin}
                     disabled={
-                      !isActiveGroup || requestJoinMutation.isPending
+                      !isActiveGroup ||
+                      checkingProfile ||
+                      requestJoinMutation.isPending
                     }
                   >
-                    {requestJoinMutation.isPending
-                      ? 'Submitting request...'
-                      : isActiveGroup
-                        ? 'Request to join'
-                        : 'Group not accepting members'}
+                    {checkingProfile
+                      ? 'Checking profile...'
+                      : requestJoinMutation.isPending
+                        ? 'Submitting request...'
+                        : isActiveGroup
+                          ? 'Request to join'
+                          : 'Group not accepting members'}
                   </Button>
                 </div>
               ) : (
@@ -623,6 +850,99 @@ export default function GroupWorkspace() {
               </div>
             </Card>
           )}
+
+          {/* Draft group management is available only to its active admin. */}
+          {canManageDraftGroup && (
+            <Card
+              title="Manage draft group"
+              description="You can edit the group details or delete this draft group."
+            >
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setShowEditForm((current) => !current)
+                    setConfirmDelete(false)
+                  }}
+                >
+                  {showEditForm ? 'Close editor' : 'Edit group'}
+                </Button>
+
+                <Button
+                  variant="danger"
+                  onClick={() => {
+                    setConfirmDelete((current) => !current)
+                    setShowEditForm(false)
+                  }}
+                >
+                  {confirmDelete ? 'Cancel deletion' : 'Delete group'}
+                </Button>
+              </div>
+
+              {showEditForm && (
+                <div className="mt-5 border-t border-border pt-5">
+                  <h3 className="mb-4 font-semibold text-text">
+                    Edit group information
+                  </h3>
+
+                  <GroupForm
+                    key={group.id}
+                    initialValues={{
+                      name: group.name || '',
+                      description: group.description || '',
+                      contribution_amount: group.contribution_amount ?? '',
+                      frequency: group.frequency || 'MONTHLY',
+                      start_date: group.start_date || '',
+                      max_members: group.max_members ?? '',
+                    }}
+                    onSubmit={handleUpdateGroup}
+                    onCancel={() => setShowEditForm(false)}
+                    isPending={updateGroupMutation.isPending}
+                    submitLabel="Save changes"
+                    pendingLabel="Saving changes..."
+                    cancelLabel="Cancel editing"
+                  />
+                </div>
+              )}
+
+              {confirmDelete && (
+                <div className="mt-5 space-y-4 rounded-xl border border-red-200 bg-red-50 p-5 dark:border-red-900 dark:bg-red-950/30">
+                  <div>
+                    <h3 className="font-semibold text-red-800 dark:text-red-300">
+                      Confirm group deletion
+                    </h3>
+
+                    <p className="mt-2 text-sm leading-6 text-red-700 dark:text-red-200">
+                      Are you sure you want to permanently delete{' '}
+                      <strong>{group.name}</strong>? This action cannot be
+                      undone. Deletion will only succeed if the group has no
+                      cycles and no other membership records.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-3">
+                    <Button
+                      variant="danger"
+                      onClick={handleDeleteGroup}
+                      disabled={deleteGroupMutation.isPending}
+                    >
+                      {deleteGroupMutation.isPending
+                        ? 'Deleting group...'
+                        : 'Yes, delete group'}
+                    </Button>
+
+                    <Button
+                      variant="secondary"
+                      onClick={() => setConfirmDelete(false)}
+                      disabled={deleteGroupMutation.isPending}
+                    >
+                      Keep group
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </Card>
+          )}
         </div>
       )}
 
@@ -664,7 +984,9 @@ export default function GroupWorkspace() {
                       onClick={() => refetchPendingMembers()}
                       disabled={pendingMembersFetching}
                     >
-                      {pendingMembersFetching ? 'Refreshing...' : 'Refresh requests'}
+                      {pendingMembersFetching
+                        ? 'Refreshing...'
+                        : 'Refresh requests'}
                     </Button>
                   </div>
 
@@ -673,8 +995,17 @@ export default function GroupWorkspace() {
                       <PendingMemberCard
                         key={member.id}
                         member={member}
-                        onApprove={() => approveMemberMutation.mutate(member.id)}
+                        onApprove={() =>
+                          approveMemberMutation.mutate(member.id)
+                        }
+                        onReject={(reason) =>
+                          rejectMemberMutation.mutateAsync({
+                            membershipId: member.id,
+                            reason,
+                          })
+                        }
                         approving={approveMemberMutation.isPending}
+                        rejecting={rejectMemberMutation.isPending}
                       />
                     ))}
                   </div>
@@ -755,9 +1086,7 @@ export default function GroupWorkspace() {
           >
             <div className="rounded-xl border border-border bg-surface-secondary p-5">
               <p className="font-semibold text-text">
-                {isAdmin
-                  ? 'Administrator access'
-                  : 'Member access'}
+                {isAdmin ? 'Administrator access' : 'Member access'}
               </p>
 
               <p className="mt-2 text-sm leading-6 text-text-muted">
