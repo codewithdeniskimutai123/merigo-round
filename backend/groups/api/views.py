@@ -20,8 +20,13 @@ from groups.group_services import (
     add_member,
     cancel_join_request,
     activate_member,
+    reject_member,
+    update_group,
+    delete_group,
 )
-from .serializers import GroupSerializer, GroupMembershipSerializer
+from .serializers import (GroupSerializer, 
+                          GroupMembershipSerializer,
+                          MembershipStatusHistorySerializer)
 
 
 @api_view(['GET'])
@@ -100,6 +105,8 @@ def group_detail(request, pk):
         status=status.HTTP_200_OK,
     )
 
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def group_create(request):
@@ -128,6 +135,58 @@ def group_create(request):
         response_serializer.data,
         status=status.HTTP_201_CREATED,
     )
+
+@api_view(["PUT", "PATCH"])
+@permission_classes([IsAuthenticated])
+def group_update(request, pk):
+    group = get_object_or_404(Group, pk=pk)
+
+    serializer = GroupSerializer(
+        group,
+        data=request.data,
+        partial=request.method == "PATCH",
+    )
+
+    serializer.is_valid(raise_exception=True)
+
+    try:
+        updated_group = update_group(
+            user=request.user,
+            group=group,
+            **serializer.validated_data,
+        )
+
+        response_serializer = GroupSerializer(
+            updated_group,
+            context={"request": request},
+        )
+
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+    except ValueError as error:
+        return Response(
+            {"detail": str(error)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def group_delete(request, pk):
+    group = get_object_or_404(Group, pk=pk)
+
+    try:
+        delete_group(
+            user=request.user,
+            group=group,
+        )
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    except ValueError as error:
+        return Response(
+            {"detail": str(error)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -240,6 +299,103 @@ def group_approve_member(request, pk, membership_id):
         status=status.HTTP_200_OK,
     )
 
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def group_reject_member(request, pk, membership_id):
+    group = get_object_or_404(
+        Group.objects.exclude(status=Group.Status.ARCHIVED),
+        pk=pk,
+    )
+
+    is_admin = GroupMembership.objects.filter(
+        group=group,
+        user=request.user,
+        role=GroupMembership.Role.ADMIN,
+        status=GroupMembership.Status.ACTIVE,
+    ).exists()
+
+    if not is_admin:
+        return Response(
+            {
+                "detail": "Only an active group administrator can reject join requests."
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    membership = get_object_or_404(
+        GroupMembership,
+        pk=membership_id,
+        group=group,
+    )
+
+    reason = request.data.get("reason", "")
+
+    if not isinstance(reason, str) or not reason.strip():
+        return Response(
+            {"reason": "A rejection reason is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        membership = reject_member(
+            membership=membership,
+            admin=request.user,
+            reason=reason,
+        )
+    except ValueError as error:
+        return Response(
+            {"detail": str(error)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    return Response(
+        {
+            "detail": "Membership request rejected successfully.",
+            "membership_id": membership.id,
+            "status": membership.status,
+            "reason": reason.strip(),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def group_my_membership_history(request, pk):
+    group = get_object_or_404(
+        Group.objects.exclude(status=Group.Status.ARCHIVED),
+        pk=pk,
+    )
+
+    membership = GroupMembership.objects.filter(
+        group=group,
+        user=request.user,
+    ).first()
+
+    if not membership:
+        return Response(
+            {
+                "membership_status": None,
+                "history": [],
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    history = membership.status_history.all()
+
+    serializer = MembershipStatusHistorySerializer(
+        history,
+        many=True,
+    )
+
+    return Response(
+        {
+            "membership_status": membership.status,
+            "history": serializer.data,
+        },
+        status=status.HTTP_200_OK,
+    )
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
