@@ -1,3 +1,4 @@
+
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -62,7 +63,7 @@ function AccountLink({ to, title, description }) {
   return (
     <Link
       to={to}
-      className="block rounded-xl border border-border p-4 transition-colors hover:bg-page"
+      className="block rounded-xl border border-border p-4 transition-all duration-300 hover:-translate-y-1 hover:border-brand-500 hover:bg-page hover:shadow-md"
     >
       <p className="font-semibold text-text">{title}</p>
       <p className="mt-1 text-sm leading-5 text-text-muted">
@@ -113,12 +114,17 @@ export default function ProfilePage() {
     username.charAt(0).toUpperCase() ||
     'U'
 
-  const accountStatus =
-    typeof profile?.is_active === 'boolean'
-      ? profile.is_active
-        ? 'Active'
-        : 'Inactive'
-      : 'Not available'
+  const isProfileComplete =
+    typeof profile?.is_profile_complete === 'boolean'
+      ? profile.is_profile_complete
+      : null
+
+  const profileStatus =
+    isProfileComplete === true
+      ? 'Profile Complete'
+      : isProfileComplete === false
+        ? 'Profile Incomplete'
+        : 'Status unavailable'
 
   if (isLoading) {
     return (
@@ -237,11 +243,31 @@ export default function ProfilePage() {
                   @{username || 'username unavailable'}
                 </p>
 
-                <p className="mt-2 text-sm font-medium text-brand-600">
-                  {accountStatus === 'Not available'
-                    ? 'Account status unavailable'
-                    : `${accountStatus} account`}
-                </p>
+                {isProfileComplete === true && (
+                  <span className="mt-2 inline-flex items-center gap-2 rounded-full bg-green-100 px-3 py-1 text-sm font-semibold text-green-700 dark:bg-green-950 dark:text-green-400">
+                    <span className="h-2 w-2 rounded-full bg-green-500" />
+                    Profile Complete
+                  </span>
+                )}
+
+                {isProfileComplete === false && (
+                  <Link
+                    to="/complete-profile"
+                    className="group mt-2 inline-flex items-center gap-2 rounded-full bg-red-100 px-3 py-1 text-sm font-semibold text-red-700 transition-all duration-300 hover:-translate-y-0.5 hover:bg-red-200 hover:shadow-md dark:bg-red-950 dark:text-red-400 dark:hover:bg-red-900"
+                  >
+                    <span className="h-2 w-2 rounded-full bg-red-500 transition-transform duration-300 group-hover:scale-125" />
+                    Profile Incomplete
+                    <span className="transition-transform duration-300 group-hover:translate-x-1">
+                      →
+                    </span>
+                  </Link>
+                )}
+
+                {isProfileComplete === null && (
+                  <p className="mt-2 text-sm font-medium text-text-muted">
+                    Profile status unavailable
+                  </p>
+                )}
               </div>
             </div>
 
@@ -252,6 +278,25 @@ export default function ProfilePage() {
               Edit profile
             </Link>
           </div>
+
+          {isProfileComplete === false && (
+            <div className="mt-5 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/40">
+              <p className="font-semibold text-red-700 dark:text-red-400">
+                Complete your profile to access group activities.
+              </p>
+              <p className="mt-1 text-sm leading-6 text-red-700/80 dark:text-red-300">
+                You cannot create or join a group until you provide all
+                required profile information. Click the status above to
+                complete your profile.
+              </p>
+              <Link
+                to="/complete-profile"
+                className="mt-3 inline-flex items-center gap-2 text-sm font-bold text-red-700 underline decoration-transparent underline-offset-4 transition-all duration-300 hover:translate-x-1 hover:decoration-current dark:text-red-400"
+              >
+                Complete your profile now →
+              </Link>
+            </div>
+          )}
         </section>
 
         <div className="grid items-start gap-6 lg:grid-cols-[1.6fr_1fr]">
@@ -265,7 +310,7 @@ export default function ProfilePage() {
                 <Detail label="Username" value={profile.username} />
                 <Detail label="Email address" value={profile.email} />
                 <Detail label="Phone number" value={profile.phone_number} />
-                <Detail label="Account status" value={accountStatus} />
+                <Detail label="Profile completion" value={profileStatus} />
                 <Detail
                   label="Account created"
                   value={formatDate(profile.created_at)}
