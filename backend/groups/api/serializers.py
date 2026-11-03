@@ -1,7 +1,11 @@
 
 from rest_framework import serializers
 
-from groups.models import Group, GroupMembership
+from groups.models import (
+    Group,
+    GroupMembership,
+    MembershipStatusHistory,
+)
 
 
 class GroupSerializer(serializers.ModelSerializer):
@@ -83,4 +87,17 @@ class GroupMembershipSerializer(serializers.ModelSerializer):
             "created_at",
         ]
 
+        read_only_fields = fields
+
+
+class MembershipStatusHistorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MembershipStatusHistory
+        fields = [
+            "id",
+            "previous_status",
+            "new_status",
+            "reason",
+            "created_at",
+        ]
         read_only_fields = fields
