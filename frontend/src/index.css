@@ -32,3 +32,18 @@
   --color-text: #e5e7eb;
   --color-text-muted: #9ca3af;
 }
+
+
+
+/* Hide scrollbar but preserve page scrolling */
+html {
+  scrollbar-width: none;
+}
+
+html::-webkit-scrollbar {
+  display: none;
+}
+
+body {
+  -ms-overflow-style: none;
+}
