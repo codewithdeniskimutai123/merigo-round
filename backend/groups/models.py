@@ -40,6 +40,7 @@ class GroupMembership(models.Model):
         TREASURER = "TREASURER", "Treasurer"
         SECRETARY = "SECRETARY", "Secretary"
         MEMBER = "MEMBER", "Member"
+        
 
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"
@@ -49,6 +50,7 @@ class GroupMembership(models.Model):
         REMOVED = "REMOVED", "Removed"
         SUSPENDED = "SUSPENDED", "Suspended"
         CANCELLED = "CANCELLED", "Cancelled"
+        REJECTED = "REJECTED", "Rejected"
 
     id = models.BigAutoField(primary_key=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="group_memberships")
@@ -83,6 +85,33 @@ class GroupMembership(models.Model):
         return f"{self.user} - {self.group}"
 
 
+
+class MembershipStatusHistory(models.Model):
+    membership = models.ForeignKey(GroupMembership, on_delete=models.CASCADE, related_name="status_history",)
+    previous_status = models.CharField(max_length=20, blank=True, null=True)
+    new_status = models.CharField(
+        max_length=20,
+        choices=GroupMembership.Status.choices,
+    )
+    reason = models.TextField(blank=True)
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="membership_status_changes",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return (
+            f"{self.membership.user.username} - "
+            f"{self.previous_status} to {self.new_status}"
+        )
 
 class Cycle(models.Model):
 
