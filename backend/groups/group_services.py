@@ -2,11 +2,32 @@ from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
 from dateutil.relativedelta import relativedelta
-from .models import (Group, Payout,
+from .models import (Group, 
+                     Payout,
                      GroupMembership, 
+                     MembershipStatusHistory,
                      Cycle, CycleMembership, 
                      CycleSwapRequest, Round, 
                      Contribution)
+
+
+
+def record_membership_status_change(
+    *,
+    membership,
+    previous_status,
+    new_status,
+    changed_by,
+    reason="",
+):
+    return MembershipStatusHistory.objects.create(
+        membership=membership,
+        previous_status=previous_status,
+        new_status=new_status,
+        changed_by=changed_by,
+        reason=reason,
+    )
+
 
 
 @transaction.atomic
@@ -94,6 +115,7 @@ def add_member(*, user, group):
             GroupMembership.Status.LEFT,
             GroupMembership.Status.REMOVED,
             GroupMembership.Status.CANCELLED,
+            GroupMembership.Status.REJECTED,
         ]:
             raise ValueError(
                 "You cannot request to join this group."
@@ -110,6 +132,8 @@ def add_member(*, user, group):
         )
 
     if membership:
+        previous_status = membership.status
+
         membership.role = GroupMembership.Role.MEMBER
         membership.status = GroupMembership.Status.PENDING
         membership.joined_at = None
@@ -123,14 +147,31 @@ def add_member(*, user, group):
             ]
         )
 
+        record_membership_status_change(
+            membership=membership,
+            previous_status=previous_status,
+            new_status=membership.status,
+            changed_by=user,
+        )
+
         return membership
 
-    return GroupMembership.objects.create(
+    membership = GroupMembership.objects.create(
         user=user,
         group=group,
         role=GroupMembership.Role.MEMBER,
         status=GroupMembership.Status.PENDING,
     )
+
+    record_membership_status_change(
+        membership=membership,
+        previous_status=None,
+        new_status=membership.status,
+        changed_by=user,
+    )
+
+    return membership
+
 
 @transaction.atomic
 def cancel_join_request(*, user, group):
@@ -180,6 +221,57 @@ def activate_member( *, membership):
     membership.joined_at = timezone.now()
     membership.save(
         update_fields=["status", "joined_at", "updated_at"]
+    )
+
+    return membership
+
+
+@transaction.atomic
+def reject_member(*, membership, admin, reason):
+
+    membership = (
+        GroupMembership.objects
+        .select_for_update()
+        .select_related("group")
+        .get(pk=membership.pk)
+    )
+
+    if not reason or not reason.strip():
+        raise ValueError(
+            "A rejection reason is required."
+        )
+
+    is_admin = GroupMembership.objects.filter(
+        group=membership.group,
+        user=admin,
+        role=GroupMembership.Role.ADMIN,
+        status=GroupMembership.Status.ACTIVE,
+    ).exists()
+
+    if not is_admin:
+        raise ValueError(
+            "Only an active group administrator can reject join requests."
+        )
+
+    if membership.status != GroupMembership.Status.PENDING:
+        raise ValueError(
+            "Only pending join requests can be rejected."
+        )
+
+    previous_status = membership.status
+
+    membership.status = GroupMembership.Status.REJECTED
+
+    membership.save(
+        update_fields=["status", "updated_at"]
+    )
+
+    record_membership_status_change(
+        membership=membership,
+        previous_status=previous_status,
+        new_status=membership.status,
+        changed_by=admin,
+        reason=reason.strip(),
     )
 
     return membership
@@ -946,3 +1038,86 @@ def approve_member_leave(*, membership):
     return membership
 
 
+@transaction.atomic
+def update_group(*, user, group, **validated_data):
+    group = Group.objects.select_for_update().get(pk=group.pk)
+
+    is_admin = GroupMembership.objects.filter(
+        group=group,
+        user=user,
+        role=GroupMembership.Role.ADMIN,
+        status=GroupMembership.Status.ACTIVE,
+    ).exists()
+
+    if not is_admin:
+        raise ValueError("Only an active group admin can edit this group.")
+
+    if group.status != Group.Status.DRAFT:
+        raise ValueError("Only draft groups can be edited.")
+
+    active_members_count = GroupMembership.objects.filter(
+        group=group,
+        status=GroupMembership.Status.ACTIVE,
+    ).count()
+
+    new_max_members = validated_data.get(
+        "max_members",
+        group.max_members,
+    )
+
+    if new_max_members < active_members_count:
+        raise ValueError(
+            "Maximum members cannot be less than the current number of active members."
+        )
+
+    for field, value in validated_data.items():
+        setattr(group, field, value)
+
+    group.save()
+
+    return group
+
+
+@transaction.atomic
+def delete_group(*, user, group):
+    group = Group.objects.select_for_update().get(pk=group.pk)
+
+    is_admin = GroupMembership.objects.filter(
+        group=group,
+        user=user,
+        role=GroupMembership.Role.ADMIN,
+        status=GroupMembership.Status.ACTIVE,
+    ).exists()
+
+    if not is_admin:
+        raise ValueError("Only an active group admin can delete this group.")
+
+    if group.status != Group.Status.DRAFT:
+        raise ValueError("Only draft groups can be deleted.")
+
+    if Cycle.objects.filter(group=group).exists():
+        raise ValueError(
+            "This group cannot be deleted because it already has cycles."
+        )
+
+    memberships = GroupMembership.objects.filter(group=group)
+
+    if memberships.count() != 1:
+        raise ValueError(
+            "This group cannot be deleted because other membership records exist."
+        )
+
+    admin_membership = memberships.first()
+
+    if (
+        admin_membership.user_id != group.created_by_id
+        or admin_membership.user_id != user.id
+        or admin_membership.role != GroupMembership.Role.ADMIN
+        or admin_membership.status != GroupMembership.Status.ACTIVE
+    ):
+        raise ValueError(
+            "This group cannot be deleted because its original admin membership has changed."
+        )
+
+    admin_membership.delete()
+    group.delete()
