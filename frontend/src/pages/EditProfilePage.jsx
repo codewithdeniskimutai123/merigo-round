@@ -13,6 +13,8 @@ import {
   updateCurrentUser,
 } from '../api/authApi.js'
 
+import { useRequestToJoinGroup } from '../hooks/useGroups.js'
+
 import Card from '../components/Card.jsx'
 import Input from '../components/Input.jsx'
 import Button from '../components/Button.jsx'
@@ -123,6 +125,17 @@ export default function EditProfilePage({ completionMode = false }) {
   const location = useLocation()
   const queryClient = useQueryClient()
 
+  // Identify an action the user intended to perform before completing the profile.
+  const pendingAction = location.state?.action
+
+  const joinGroupId =
+    pendingAction?.type === 'JOIN_GROUP'
+      ? pendingAction.groupId
+      : null
+
+  // Reuse the existing group join-request mutation.
+  const joinGroupMutation = useRequestToJoinGroup(joinGroupId)
+
   const fileInputRef = useRef(null)
   const temporaryPhotoUrl = useRef(null)
 
@@ -186,7 +199,7 @@ export default function EditProfilePage({ completionMode = false }) {
   const updateMutation = useMutation({
     mutationFn: updateCurrentUser,
 
-    onSuccess: (updatedProfile) => {
+    onSuccess: async (updatedProfile) => {
       // Django must confirm completion before we declare success.
       if (
         completionMode &&
@@ -250,6 +263,25 @@ export default function EditProfilePage({ completionMode = false }) {
           : 'Your profile has been updated.',
       )
 
+      // Automatically submit the intended group join request
+      // after Django confirms that profile completion succeeded.
+      if (
+        completionMode &&
+        pendingAction?.type === 'JOIN_GROUP' &&
+        joinGroupId
+      ) {
+        try {
+          await joinGroupMutation.mutateAsync()
+        } catch {
+          // The existing group mutation handles its own error notification.
+          // The user can retry from the group workspace.
+        }
+
+        navigate(`/groups/${joinGroupId}`, { replace: true })
+        return
+      }
+
+      // Preserve the existing navigation behavior for other profile updates.
       const destination = location.state?.from
 
       const redirectPath = completionMode
