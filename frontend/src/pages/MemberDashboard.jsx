@@ -2,7 +2,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import Card from '../components/Card.jsx'
-import { useGroups, usePendingGroupMembers } from '../hooks/useGroups.js'
+import {
+  useGroups,
+  usePendingGroupMembers,
+  useMyGroupMembershipHistory,
+} from '../hooks/useGroups.js'
 
 export default function MemberDashboard() {
   const { data, isLoading, isError, error, isFetching, refetch } =
@@ -40,7 +44,7 @@ export default function MemberDashboard() {
   }, [data])
 
   const canRequestMembership = (status) =>
-    !status || ['CANCELLED', 'LEFT', 'REMOVED'].includes(status)
+    !status || ['CANCELLED', 'LEFT', 'REMOVED', 'REJECTED'].includes(status)
 
   const joinedGroups = groups.filter(
     (group) => group.user_membership_status === 'ACTIVE',
@@ -64,6 +68,12 @@ export default function MemberDashboard() {
     (group) =>
       group.status !== 'ACTIVE' &&
       canRequestMembership(group.user_membership_status),
+  )
+
+  const requestHistoryGroups = groups.filter((group) =>
+    ['PENDING', 'REJECTED', 'CANCELLED'].includes(
+      group.user_membership_status,
+    ),
   )
 
   return (
@@ -201,6 +211,10 @@ export default function MemberDashboard() {
             pending
           />
 
+          {requestHistoryGroups.length > 0 && (
+            <MembershipRequestHistory groups={requestHistoryGroups} />
+          )}
+
           {adminGroups.length > 0 && (
             <AdminMembershipRequests groups={adminGroups} />
           )}
@@ -286,6 +300,133 @@ export default function MemberDashboard() {
         </Card>
       </section>
     </div>
+  )
+}
+
+function MembershipRequestHistory({ groups }) {
+  return (
+    <section className="space-y-4">
+      <div>
+        <h2 className="text-xl font-bold text-text">
+          Membership request history
+        </h2>
+        <p className="mt-1 text-sm text-text-muted">
+          Follow the decisions and updates on your group membership requests.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        {groups.map((group) => (
+          <MembershipRequestHistoryCard
+            key={group.id}
+            group={group}
+          />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function MembershipRequestHistoryCard({ group }) {
+  const { data, isLoading, isError } =
+    useMyGroupMembershipHistory(group.id)
+
+  const history = data?.history || []
+  const latestRejection = history.find(
+    (item) => item.new_status === 'REJECTED',
+  )
+
+  const statusLabels = {
+    PENDING: 'Awaiting approval',
+    REJECTED: 'Rejected',
+    CANCELLED: 'Cancelled',
+  }
+
+  const statusStyles = {
+    PENDING: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
+    REJECTED: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300',
+    CANCELLED: 'bg-surface-secondary text-text-muted',
+  }
+
+  const formatDate = (value) => {
+    if (!value) return 'Date unavailable'
+
+    const date = new Date(value)
+
+    if (Number.isNaN(date.getTime())) return 'Date unavailable'
+
+    return date.toLocaleString('en-KE', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    })
+  }
+
+  return (
+    <Card title={group.name}>
+      {isLoading ? (
+        <p className="text-sm text-text-muted">
+          Loading your request history...
+        </p>
+      ) : isError ? (
+        <p className="text-sm text-red-600 dark:text-red-300">
+          Unable to retrieve your request history.
+        </p>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-text-muted">
+              Current request status
+            </p>
+
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                statusStyles[group.user_membership_status] ||
+                'bg-surface-secondary text-text-muted'
+              }`}
+            >
+              {statusLabels[group.user_membership_status] ||
+                group.user_membership_status}
+            </span>
+          </div>
+
+          {latestRejection && (
+            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/30">
+              <p className="text-sm font-semibold text-red-800 dark:text-red-300">
+                Administrator's rejection reason
+              </p>
+
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-red-700 dark:text-red-200">
+                {latestRejection.reason ||
+                  'No rejection reason was provided.'}
+              </p>
+
+              <p className="mt-2 text-xs text-red-700/80 dark:text-red-300/80">
+                Rejected on {formatDate(latestRejection.created_at)}
+              </p>
+            </div>
+          )}
+
+          {!latestRejection && history.length > 0 && (
+            <p className="mt-3 text-sm text-text-muted">
+              Last request update: {formatDate(history[0].created_at)}
+            </p>
+          )}
+
+          {history.length === 0 && (
+            <p className="mt-3 text-sm text-text-muted">
+              No request history is available yet.
+            </p>
+          )}
+
+          <Link
+            to={`/groups/${group.id}`}
+            className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-[#452044] px-4 py-3 text-center text-sm font-semibold text-white transition hover:bg-[#32172F] focus:outline-none focus:ring-2 focus:ring-[#C5A15B] focus:ring-offset-2"
+          >
+            View group and request details
+          </Link>
+        </>
+      )}
+    </Card>
   )
 }
 
