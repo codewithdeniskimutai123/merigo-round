@@ -5,6 +5,8 @@ from groups.models import (
     Group,
     GroupMembership,
     MembershipStatusHistory,
+    Cycle,
+    Round
 )
 
 
@@ -99,5 +101,59 @@ class MembershipStatusHistorySerializer(serializers.ModelSerializer):
             "new_status",
             "reason",
             "created_at",
+        ]
+        read_only_fields = fields
+
+
+class CycleCreateSerializer(serializers.Serializer):
+    start_date = serializers.DateField()
+    swap_deadline = serializers.DateTimeField()
+
+    def validate_swap_deadline(self, value):
+        from django.utils import timezone
+
+        if value <= timezone.now():
+            raise serializers.ValidationError(
+                "The swap deadline must be in the future."
+            )
+
+        return value
+
+
+class CycleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Cycle
+        fields = [
+            "id",
+            "group",
+            "name",
+            "cycle_number",
+            "start_date",
+            "end_date",
+            "status",
+            "swap_deadline",
+            "order_status",
+        ]
+
+        read_only_fields = fields
+
+class RoundSerializer(serializers.ModelSerializer):
+    recipient_details = GroupMembershipSerializer(
+        source="recipient",
+        read_only=True,
+    )
+
+    class Meta:
+        model = Round
+        fields = [
+            "id",
+            "cycle",
+            "round_number",
+            "recipient",
+            "recipient_details",
+            "start_date",
+            "due_date",
+            "status",
+            "expected_payout_amount",
         ]
         read_only_fields = fields
