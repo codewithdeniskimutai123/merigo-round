@@ -1,3 +1,5 @@
+import uuid
+
 from django.conf import settings
 from django.db import models
 
@@ -152,11 +154,28 @@ class Cycle(models.Model):
 
 class CycleMembership(models.Model):
     id = models.BigAutoField(primary_key=True)
-    cycle = models.ForeignKey(Cycle, on_delete=models.PROTECT, related_name="cycle_memberships")
-    membership = models.ForeignKey(GroupMembership, on_delete=models.PROTECT, related_name="cycle_memberships")
-    position = models.PositiveIntegerField()
+    cycle = models.ForeignKey(
+        Cycle,
+        on_delete=models.PROTECT,
+        related_name="cycle_memberships"
+    )
+    membership = models.ForeignKey(
+        GroupMembership,
+        on_delete=models.PROTECT,
+        related_name="cycle_memberships"
+    )
+
+    selected_number = models.PositiveIntegerField(
+        null=True,
+        blank=True
+    )
+    position = models.PositiveIntegerField(
+        null=True,
+        blank=True
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
     class Meta:
         constraints = [
             models.UniqueConstraint(
@@ -167,12 +186,59 @@ class CycleMembership(models.Model):
                 fields=["cycle", "position"],
                 name="unique_cycle_position"
             ),
+            models.UniqueConstraint(
+                fields=["cycle", "selected_number"],
+                name="unique_cycle_selected_number"
+            ),
         ]
 
         ordering = ["cycle", "position"]
 
     def __str__(self):
         return f"{self.cycle} - {self.membership} - Position {self.position}"
+
+
+class CycleDrawOption(models.Model):
+    id = models.BigAutoField(primary_key=True)
+
+    cycle = models.ForeignKey(
+        Cycle,
+        on_delete=models.PROTECT,
+        related_name="draw_options"
+    )
+    number = models.PositiveIntegerField()
+    token = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        editable=False
+    )
+    selected_by = models.OneToOneField(
+        CycleMembership,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="draw_option"
+    )
+
+    selected_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["cycle", "number"],
+                name="unique_cycle_draw_number"
+            ),
+        ]
+
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"{self.cycle} - Draw option"
 
 class CycleSwapRequest(models.Model):
 
@@ -228,8 +294,12 @@ class Round(models.Model):
             models.UniqueConstraint(
                 fields=["cycle", "round_number"],
                 name="unique_round_number_per_cycle"
-            )
-        ]
+            ),
+            models.UniqueConstraint(
+                fields=["cycle", "recipient"],
+                name="unique_recipient_per_cycle"
+            ),
+            ]
 
         indexes = [
             models.Index(
