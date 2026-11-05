@@ -1,6 +1,6 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
-
+from groups.models import GroupMembership
 
 User = get_user_model()
 
@@ -40,6 +40,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     is_profile_complete = serializers.BooleanField(read_only=True)
+
     class Meta:
         model = User
         fields = [
@@ -61,6 +62,41 @@ class UserSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
+    def validate(self, attrs):
+        user = self.instance
+
+        if user is None:
+            return attrs
+
+        owns_group = user.created_groups.exists()
+
+        has_active_membership = user.group_memberships.filter(
+            status=GroupMembership.Status.ACTIVE
+        ).exists()
+
+        if owns_group or has_active_membership:
+            required_fields = [
+                "first_name",
+                "last_name",
+                "email",
+                "phone_number",
+            ]
+
+            errors = {}
+
+            for field in required_fields:
+                value = attrs.get(field, getattr(user, field))
+
+                if value is None or not str(value).strip():
+                    errors[field] = (
+                        "This field cannot be empty because you "
+                        "own a group or have an active group membership."
+                    )
+
+            if errors:
+                raise serializers.ValidationError(errors)
+
+        return attrs
 
 
 class ChangePasswordSerializer(serializers.Serializer):
