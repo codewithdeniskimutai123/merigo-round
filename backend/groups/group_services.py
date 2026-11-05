@@ -4,7 +4,8 @@ from datetime import timedelta
 from dateutil.relativedelta import relativedelta
 from .models import (Group, 
                      Payout,
-                     GroupMembership, 
+                     GroupMembership,
+                     CycleDrawOption,
                      MembershipStatusHistory,
                      Cycle, CycleMembership, 
                      CycleSwapRequest, Round, 
@@ -278,18 +279,28 @@ def reject_member(*, membership, admin, reason):
 
 
 @transaction.atomic
-def create_cycle( *, group, start_date):
+def create_cycle(*, group, start_date, swap_deadline):
+
+    group = Group.objects.select_for_update().get(pk=group.pk)
+
     if group.status != Group.Status.ACTIVE:
         raise ValueError(
             "A cycle can only be created for an active group."
         )
 
-    active_members = GroupMembership.objects.filter(
-        group=group,
-        status=GroupMembership.Status.ACTIVE,
+    if swap_deadline is None or swap_deadline <= timezone.now():
+        raise ValueError(
+            "The swap deadline must be a future date and time."
+        )
+
+    active_members = list(
+        GroupMembership.objects.filter(
+            group=group,
+            status=GroupMembership.Status.ACTIVE,
+        ).order_by("joined_at", "id")
     )
 
-    member_count = active_members.count()
+    member_count = len(active_members)
 
     if member_count < 2:
         raise ValueError(
@@ -302,58 +313,251 @@ def create_cycle( *, group, start_date):
         .first()
     )
 
-    if last_cycle:
-        cycle_number = last_cycle.cycle_number + 1
-    else:
-        cycle_number = 1
+    cycle_number = (
+        last_cycle.cycle_number + 1
+        if last_cycle
+        else 1
+    )
 
     cycle = Cycle.objects.create(
         group=group,
         name=f"Cycle {cycle_number}",
         cycle_number=cycle_number,
         start_date=start_date,
+        swap_deadline=swap_deadline,
         status=Cycle.Status.DRAFT,
+        order_status=Cycle.OrderStatus.PENDING,
     )
 
+    cycle_memberships = [
+        CycleMembership(
+            cycle=cycle,
+            membership=membership,
+        )
+        for membership in active_members
+    ]
+
+    CycleMembership.objects.bulk_create(cycle_memberships)
+
+    draw_options = [
+        CycleDrawOption(
+            cycle=cycle,
+            number=number,
+        )
+        for number in range(1, member_count + 1)
+    ]
+
+    CycleDrawOption.objects.bulk_create(draw_options)
+
     return cycle
+
+def get_cycle_draw_options(*, cycle, membership):
+
+    cycle_membership = CycleMembership.objects.filter(
+        cycle=cycle,
+        membership=membership,
+    ).first()
+
+    if cycle_membership is None:
+        raise ValueError(
+            "You are not eligible to participate in this cycle's draw."
+        )
+
+    if cycle.order_status != Cycle.OrderStatus.PENDING:
+        return {
+            "options": [],
+            "remaining_options": 0,
+            "has_selected": True,
+            "draw_complete": True,
+        }
+
+    has_selected = CycleDrawOption.objects.filter(
+        cycle=cycle,
+        selected_by=cycle_membership,
+    ).exists()
+
+    if has_selected:
+        return {
+            "options": [],
+            "remaining_options": CycleDrawOption.objects.filter(
+                cycle=cycle,
+                selected_by__isnull=True,
+            ).count(),
+            "has_selected": True,
+            "draw_complete": False,
+        }
+
+    available_options = list(
+        CycleDrawOption.objects.filter(
+            cycle=cycle,
+            selected_by__isnull=True,
+        ).order_by("?").values_list("token", flat=True)
+    )
+
+    return {
+        "options": available_options,
+        "remaining_options": len(available_options),
+        "has_selected": False,
+        "draw_complete": False,
+    }
+
+@transaction.atomic
+def select_cycle_draw_option(*, cycle, membership, token):
+
+    cycle = Cycle.objects.select_for_update().get(
+        pk=cycle.pk
+    )
+
+    if cycle.status != Cycle.Status.DRAFT:
+        raise ValueError(
+            "The draw is only available for draft cycles."
+        )
+
+    if cycle.order_status != Cycle.OrderStatus.PENDING:
+        raise ValueError(
+            "The draw has already been completed."
+        )
+
+    cycle_membership = CycleMembership.objects.select_for_update().filter(
+        cycle=cycle,
+        membership=membership,
+    ).first()
+
+    if cycle_membership is None:
+        raise ValueError(
+            "You are not eligible to participate in this cycle's draw."
+        )
+
+    already_selected = CycleDrawOption.objects.filter(
+        cycle=cycle,
+        selected_by=cycle_membership,
+    ).exists()
+
+    if already_selected:
+        raise ValueError(
+            "You have already selected your number."
+        )
+
+    draw_option = CycleDrawOption.objects.select_for_update().filter(
+        cycle=cycle,
+        token=token,
+        selected_by__isnull=True,
+    ).first()
+
+    if draw_option is None:
+        raise ValueError(
+            "This draw option is no longer available."
+        )
+
+    draw_option.selected_by = cycle_membership
+    draw_option.selected_at = timezone.now()
+
+    draw_option.save(
+        update_fields=["selected_by", "selected_at"]
+    )
+
+    member_count = CycleMembership.objects.filter(
+        cycle=cycle
+    ).count()
+
+    selected_count = CycleDrawOption.objects.filter(
+        cycle=cycle,
+        selected_by__isnull=False,
+    ).count()
+
+    draw_complete = selected_count == member_count
+
+    if draw_complete:
+        cycle_memberships = list(
+            CycleMembership.objects.select_for_update().filter(
+                cycle=cycle
+            ).order_by("id")
+        )
+
+        highest_position = max(
+            (item.position or 0 for item in cycle_memberships),
+            default=0,
+        )
+
+        for index, item in enumerate(cycle_memberships, start=1):
+            item.position = highest_position + index
+
+            item.save(
+                update_fields=["position", "updated_at"]
+            )
+
+    
+        selected_options = CycleDrawOption.objects.filter(
+            cycle=cycle,
+            selected_by__isnull=False,
+        ).select_related("selected_by")
+
+        for option in selected_options:
+            selected_membership = option.selected_by
+
+            selected_membership.selected_number = option.number
+            selected_membership.position = option.number
+
+            selected_membership.save(
+                update_fields=[
+                    "selected_number",
+                    "position",
+                    "updated_at",
+                ]
+            )
+
+       
+        cycle.order_status = Cycle.OrderStatus.OPEN
+
+        cycle.save(
+            update_fields=["order_status", "updated_at"]
+        )
+
+    remaining_options = CycleDrawOption.objects.filter(
+        cycle=cycle,
+        selected_by__isnull=True,
+    ).count()
+
+    return {
+        "has_selected": True,
+        "draw_complete": draw_complete,
+        "remaining_options": remaining_options,
+    }
+
 
 @transaction.atomic
 def generate_cycle_order(*, cycle):
 
-    if cycle.order_status != Cycle.OrderStatus.PENDING:
-        raise ValueError(
-            "Cycle order has already been generated."
-        )
-
-    active_members = list(
-        GroupMembership.objects.filter(
-            group=cycle.group,
-            status=GroupMembership.Status.ACTIVE,
-        ).order_by("joined_at")
+    cycle = Cycle.objects.select_for_update().get(
+        pk=cycle.pk
     )
 
-    if len(active_members) < 2:
+    if cycle.order_status != Cycle.OrderStatus.PENDING:
         raise ValueError(
-            "A cycle requires at least two active members."
+            "The cycle draw has already been completed or locked."
         )
 
-    for position, membership in enumerate(active_members, start=1):
-        CycleMembership.objects.create(
-            cycle=cycle,
-            membership=membership,
-            position=position,
-        )
+    member_count = CycleMembership.objects.filter(
+        cycle=cycle
+    ).count()
 
-    cycle.order_status = Cycle.OrderStatus.OPEN
-    cycle.save(update_fields=["order_status", "updated_at"])
+    option_count = CycleDrawOption.objects.filter(
+        cycle=cycle
+    ).count()
+
+    if member_count < 2 or option_count != member_count:
+        raise ValueError(
+            "The cycle draw has not been initialized correctly."
+        )
 
     return cycle
-
 
 @transaction.atomic
 def request_cycle_swap(*, requester, target):
 
-    cycle = requester.cycle
+    cycle = Cycle.objects.select_for_update().get(
+        pk=requester.cycle_id
+    )
 
     if target.cycle_id != cycle.id:
         raise ValueError(
@@ -380,10 +584,22 @@ def request_cycle_swap(*, requester, target):
             "The swap deadline has passed."
         )
 
+    # Lock both cycle memberships.
+    locked_memberships = list(
+        CycleMembership.objects.select_for_update()
+        .filter(pk__in=[requester.id, target.id])
+        .order_by("id")
+    )
+
+    if len(locked_memberships) != 2:
+        raise ValueError(
+            "Both members must belong to this cycle."
+        )
+
     existing_request = CycleSwapRequest.objects.filter(
         cycle=cycle,
-        requester=requester,
-        target=target,
+        requester_id=requester.id,
+        target_id=target.id,
         status=CycleSwapRequest.Status.PENDING,
     ).exists()
 
@@ -392,24 +608,34 @@ def request_cycle_swap(*, requester, target):
             "A pending swap request already exists."
         )
 
-    swap_request = CycleSwapRequest.objects.create(
+    if requester.position is None or target.position is None:
+        raise ValueError(
+            "Both members must have assigned positions."
+        )
+
+    return CycleSwapRequest.objects.create(
         cycle=cycle,
         requester=requester,
         target=target,
         status=CycleSwapRequest.Status.PENDING,
     )
 
-    return swap_request
 
 @transaction.atomic
 def accept_cycle_swap(*, swap_request):
+
+    cycle = Cycle.objects.select_for_update().get(
+        pk=swap_request.cycle_id
+    )
+
+    swap_request = CycleSwapRequest.objects.select_for_update().get(
+        pk=swap_request.pk
+    )
 
     if swap_request.status != CycleSwapRequest.Status.PENDING:
         raise ValueError(
             "Only pending swap requests can be accepted."
         )
-
-    cycle = swap_request.cycle
 
     if cycle.order_status != Cycle.OrderStatus.OPEN:
         raise ValueError(
@@ -421,36 +647,82 @@ def accept_cycle_swap(*, swap_request):
             "A swap deadline has not been set."
         )
 
-    if timezone.now() > cycle.swap_deadline:
+    now = timezone.now()
+
+    if now > cycle.swap_deadline:
         swap_request.status = CycleSwapRequest.Status.EXPIRED
-        swap_request.responded_at = timezone.now()
+        swap_request.responded_at = now
         swap_request.save(
             update_fields=["status", "responded_at"]
         )
 
+        return swap_request
+
+    requester_id = swap_request.requester_id
+    target_id = swap_request.target_id
+
+    locked_memberships = list(
+        CycleMembership.objects.select_for_update()
+        .filter(pk__in=[requester_id, target_id])
+        .order_by("id")
+    )
+
+    if len(locked_memberships) != 2:
         raise ValueError(
-            "The swap deadline has passed."
+            "Both members must still belong to this cycle."
         )
 
-    requester = swap_request.requester
-    target = swap_request.target
+    memberships_by_id = {
+        membership.id: membership
+        for membership in locked_memberships
+    }
+
+    requester = memberships_by_id[requester_id]
+    target = memberships_by_id[target_id]
+
+    if (
+        requester.cycle_id != cycle.id
+        or target.cycle_id != cycle.id
+    ):
+        raise ValueError(
+            "Both members must belong to the same cycle."
+        )
 
     requester_position = requester.position
     target_position = target.position
 
-    requester.position = target_position
-    target.position = requester_position
+    if requester_position is None or target_position is None:
+        raise ValueError(
+            "Both members must have assigned positions."
+        )
 
+    # Use a temporary position to avoid violating
+    # the unique (cycle, position) constraint.
+    temporary_position = (
+        CycleMembership.objects.filter(
+            cycle=cycle
+        ).order_by("-position").values_list(
+            "position", flat=True
+        ).first() or 0
+    ) + 1
+
+    requester.position = temporary_position
     requester.save(
         update_fields=["position", "updated_at"]
     )
 
+    target.position = requester_position
     target.save(
         update_fields=["position", "updated_at"]
     )
 
+    requester.position = target_position
+    requester.save(
+        update_fields=["position", "updated_at"]
+    )
+
     swap_request.status = CycleSwapRequest.Status.ACCEPTED
-    swap_request.responded_at = timezone.now()
+    swap_request.responded_at = now
     swap_request.save(
         update_fields=["status", "responded_at"]
     )
@@ -461,12 +733,18 @@ def accept_cycle_swap(*, swap_request):
 @transaction.atomic
 def reject_cycle_swap(*, swap_request):
 
+    cycle = Cycle.objects.select_for_update().get(
+        pk=swap_request.cycle_id
+    )
+
+    swap_request = CycleSwapRequest.objects.select_for_update().get(
+        pk=swap_request.pk
+    )
+
     if swap_request.status != CycleSwapRequest.Status.PENDING:
         raise ValueError(
             "Only pending swap requests can be rejected."
         )
-
-    cycle = swap_request.cycle
 
     if cycle.order_status != Cycle.OrderStatus.OPEN:
         raise ValueError(
@@ -478,19 +756,19 @@ def reject_cycle_swap(*, swap_request):
             "A swap deadline has not been set."
         )
 
-    if timezone.now() > cycle.swap_deadline:
+    now = timezone.now()
+
+    if now > cycle.swap_deadline:
         swap_request.status = CycleSwapRequest.Status.EXPIRED
-        swap_request.responded_at = timezone.now()
+        swap_request.responded_at = now
         swap_request.save(
             update_fields=["status", "responded_at"]
         )
 
-        raise ValueError(
-            "The swap deadline has passed."
-        )
+        return swap_request
 
     swap_request.status = CycleSwapRequest.Status.REJECTED
-    swap_request.responded_at = timezone.now()
+    swap_request.responded_at = now
 
     swap_request.save(
         update_fields=["status", "responded_at"]
@@ -502,6 +780,10 @@ def reject_cycle_swap(*, swap_request):
 @transaction.atomic
 def finalize_cycle_order(*, cycle):
 
+    cycle = Cycle.objects.select_for_update().get(
+        pk=cycle.pk
+    )
+
     if cycle.order_status != Cycle.OrderStatus.OPEN:
         raise ValueError(
             "Only an open cycle order can be finalized."
@@ -512,10 +794,52 @@ def finalize_cycle_order(*, cycle):
             "A swap deadline has not been set."
         )
 
-    if timezone.now() < cycle.swap_deadline:
+    now = timezone.now()
+
+    if now < cycle.swap_deadline:
         raise ValueError(
             "The swap deadline has not passed yet."
         )
+
+    # Lock and retrieve all cycle memberships.
+    cycle_memberships = list(
+        CycleMembership.objects.select_for_update()
+        .filter(cycle=cycle)
+        .order_by("position", "id")
+    )
+
+    if not cycle_memberships:
+        raise ValueError(
+            "The cycle has no members."
+        )
+
+    # Ensure every member has a completed draw and position.
+    if any(
+        member.selected_number is None or member.position is None
+        for member in cycle_memberships
+    ):
+        raise ValueError(
+            "Every member must complete the number draw before finalization."
+        )
+
+    positions = [
+        member.position
+        for member in cycle_memberships
+    ]
+
+    if len(positions) != len(set(positions)):
+        raise ValueError(
+            "Duplicate positions were found. The cycle order cannot be finalized."
+        )
+
+    # Requests that were not answered before the deadline expire.
+    CycleSwapRequest.objects.filter(
+        cycle=cycle,
+        status=CycleSwapRequest.Status.PENDING,
+    ).update(
+        status=CycleSwapRequest.Status.EXPIRED,
+        responded_at=now,
+    )
 
     cycle.order_status = Cycle.OrderStatus.LOCKED
 
@@ -556,16 +880,23 @@ def get_round_date(*, start_date, round_number, frequency):
 
 @transaction.atomic
 def create_cycle_rounds(*, cycle):
+    cycle = Cycle.objects.select_for_update().get(pk=cycle.pk)
 
     if cycle.order_status != Cycle.OrderStatus.LOCKED:
         raise ValueError(
             "Rounds can only be created after the cycle order is finalized."
         )
 
+    if cycle.status != Cycle.Status.DRAFT:
+        raise ValueError(
+            "Rounds can only be created for a draft cycle."
+        )
+
     cycle_memberships = list(
-        CycleMembership.objects.filter(
-            cycle=cycle
-        ).order_by("position")
+        CycleMembership.objects.select_for_update()
+        .filter(cycle=cycle)
+        .select_related("membership")
+        .order_by("position")
     )
 
     if not cycle_memberships:
@@ -580,25 +911,48 @@ def create_cycle_rounds(*, cycle):
 
     member_count = len(cycle_memberships)
 
-    for cycle_membership in cycle_memberships:
+    positions = [
+        cycle_membership.position
+        for cycle_membership in cycle_memberships
+    ]
 
+    expected_positions = list(range(1, member_count + 1))
+
+    if positions != expected_positions:
+        raise ValueError(
+            "The finalized cycle positions must be consecutive, starting from 1."
+        )
+
+    for cycle_membership in cycle_memberships:
+        if cycle_membership.selected_number is None:
+            raise ValueError(
+                "Every cycle member must have a completed draw selection."
+            )
+
+    rounds = []
+
+    for cycle_membership in cycle_memberships:
         round_date = get_round_date(
             start_date=cycle.start_date,
             round_number=cycle_membership.position,
             frequency=cycle.group.frequency,
         )
 
-        Round.objects.create(
-            cycle=cycle,
-            round_number=cycle_membership.position,
-            recipient=cycle_membership.membership,
-            start_date=round_date,
-            due_date=round_date,
-            expected_payout_amount=(
-                cycle.group.contribution_amount * member_count
-            ),
-            status=Round.Status.UPCOMING,
+        rounds.append(
+            Round(
+                cycle=cycle,
+                round_number=cycle_membership.position,
+                recipient=cycle_membership.membership,
+                start_date=round_date,
+                due_date=round_date,
+                expected_payout_amount=(
+                    cycle.group.contribution_amount * member_count
+                ),
+                status=Round.Status.UPCOMING,
+            )
         )
+
+    Round.objects.bulk_create(rounds)
 
     return cycle.rounds.all()
 
