@@ -3,11 +3,14 @@ import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
+// API
 import { getCurrentUser } from '../api/authApi.js'
 
+// Shared components
 import Card from '../components/Card.jsx'
 import Button from '../components/Button.jsx'
 
+// Group hooks
 import {
   useGroup,
   useGroupMembers,
@@ -21,12 +24,27 @@ import {
   useDeleteGroup,
 } from '../hooks/useGroups.js'
 
+// Group leave hooks
+import {
+  useRequestGroupLeave,
+  useCancelGroupLeaveRequest,
+  usePendingGroupLeaveRequests,
+  useApproveGroupLeaveRequest,
+  useRejectGroupLeaveRequest,
+} from '../hooks/useGroupLeave.js'
+
+// Workspace components
 import MemberCard from './groups/workspace/components/MemberCard.jsx'
 import PendingMemberCard from './groups/workspace/components/PendingMemberCard.jsx'
 import GroupHeader from './groups/workspace/components/GroupHeader.jsx'
 import GroupNavigation from './groups/workspace/components/GroupNavigation.jsx'
 import GroupOverview from './groups/workspace/components/GroupOverview.jsx'
 import GroupMembers from './groups/workspace/components/GroupMembers.jsx'
+import ContributionManagement from './groups/workspace/components/ContributionManagement.jsx'
+import ContributionDetail from './groups/workspace/components/ContributionDetail.jsx'
+import PaymentHistory from './groups/workspace/components/PaymentHistory.jsx'
+
+// Cycle components
 import CycleManagement from './groups/workspace/components/cycles/CycleManagement.jsx'
 
 const sections = [
@@ -40,16 +58,6 @@ const sections = [
 ]
 
 const sectionDescriptions = {
-  members: {
-    title: 'Group members',
-    description:
-      'View active member profiles and their assigned group roles.',
-  },
-  contributions: {
-    title: 'Contributions',
-    description:
-      'View contribution records, amounts due, payments made and outstanding balances.',
-  },
   payments: {
     title: 'Payment history',
     description:
@@ -59,11 +67,6 @@ const sectionDescriptions = {
     title: 'Payout schedule',
     description:
       'View payout recipients, expected amounts and payout transaction statuses.',
-  },
-  cycles: {
-    title: 'Cycles and rounds',
-    description:
-      'View savings cycles, round schedules, payout order and cycle progress.',
   },
   activity: {
     title: 'Group activity',
@@ -104,6 +107,7 @@ export default function GroupWorkspace() {
   const [showEditForm, setShowEditForm] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [currentUser, setCurrentUser] = useState(null)
+  const [selectedContribution, setSelectedContribution] = useState(null)
 
   useEffect(() => {
     let isMounted = true
@@ -126,6 +130,10 @@ export default function GroupWorkspace() {
       isMounted = false
     }
   }, [])
+
+  useEffect(() => {
+    setSelectedContribution(null)
+  }, [id])
 
   const {
     data: group,
@@ -173,10 +181,26 @@ export default function GroupWorkspace() {
     isLoading: membershipHistoryLoading,
   } = useMyGroupMembershipHistory(id)
 
+  // Group join-request mutations.
   const requestJoinMutation = useRequestToJoinGroup(id)
   const cancelJoinMutation = useCancelGroupJoinRequest(id)
   const approveMemberMutation = useApproveGroupMember(id)
   const rejectMemberMutation = useRejectGroupMember(id)
+
+  // Group leave-request hooks.
+  const {
+    data: pendingLeaveRequests,
+    isLoading: pendingLeaveRequestsLoading,
+    isError: pendingLeaveRequestsError,
+    error: pendingLeaveRequestsErrorDetails,
+    refetch: refetchPendingLeaveRequests,
+    isFetching: pendingLeaveRequestsFetching,
+  } = usePendingGroupLeaveRequests(id, isAdmin)
+
+  const requestLeaveMutation = useRequestGroupLeave(id)
+  const cancelLeaveMutation = useCancelGroupLeaveRequest(id)
+  const approveLeaveMutation = useApproveGroupLeaveRequest(id)
+  const rejectLeaveMutation = useRejectGroupLeaveRequest(id)
 
   const updateGroupMutation = useUpdateGroup(id)
   const deleteGroupMutation = useDeleteGroup(id)
@@ -187,15 +211,55 @@ export default function GroupWorkspace() {
     (item) => item.new_status === 'REJECTED',
   )
 
+  // Identify a member-cancelled leave request separately.
+  const isLeaveCancellation = (item) => {
+    const reason = String(item.reason || '').toLowerCase()
+
+    return (
+      item.previous_status === 'LEAVE_REQUESTED' &&
+      item.new_status === 'ACTIVE' &&
+      (
+        reason.includes('member cancelled their leave request') ||
+        reason.includes('member canceled their leave request')
+      )
+    )
+  }
+
+  const latestLeaveCancellation = history.find(isLeaveCancellation)
+
+  // Only genuine leave-request rejections should appear as rejections.
+  const latestLeaveRejection = history.find(
+    (item) =>
+      item.previous_status === 'LEAVE_REQUESTED' &&
+      item.new_status === 'ACTIVE' &&
+      item.reason &&
+      !isLeaveCancellation(item),
+  )
+
+  function handleOpenContribution(contribution) {
+    setSelectedContribution(contribution)
+    setActiveSection('payments')
+  }
+
+  function handleViewPaymentHistory() {
+    setSelectedContribution(null)
+    setActiveSection('payments')
+  }
+
+  function handleBackToContributions() {
+    setSelectedContribution(null)
+    setActiveSection('contributions')
+  }
+
   async function handleRequestToJoin() {
     if (checkingProfile || requestJoinMutation.isPending) return
 
     setCheckingProfile(true)
 
     try {
-      const currentUser = await getCurrentUser()
+      const user = await getCurrentUser()
 
-      if (currentUser.is_profile_complete !== true) {
+      if (user.is_profile_complete !== true) {
         navigate('/complete-profile', {
           state: {
             from: {
@@ -222,6 +286,30 @@ export default function GroupWorkspace() {
     } finally {
       setCheckingProfile(false)
     }
+  }
+
+  // Member requests to leave the group.
+  function handleRequestToLeave() {
+    if (
+      membershipStatus !== 'ACTIVE' ||
+      requestLeaveMutation.isPending
+    ) {
+      return
+    }
+
+    requestLeaveMutation.mutate()
+  }
+
+  // Member cancels their pending group leave request.
+  function handleCancelLeaveRequest() {
+    if (
+      membershipStatus !== 'LEAVE_REQUESTED' ||
+      cancelLeaveMutation.isPending
+    ) {
+      return
+    }
+
+    cancelLeaveMutation.mutate()
   }
 
   function handleUpdateGroup(groupData) {
@@ -364,6 +452,7 @@ export default function GroupWorkspace() {
       {isMember && activeSection === 'members' && (
         <GroupMembers
           isAdmin={isAdmin}
+          currentUser={currentUser}
           pendingMembersLoading={pendingMembersLoading}
           pendingMembersError={pendingMembersError}
           pendingMembersErrorDetails={pendingMembersErrorDetails}
@@ -372,6 +461,25 @@ export default function GroupWorkspace() {
           refetchPendingMembers={refetchPendingMembers}
           approveMemberMutation={approveMemberMutation}
           rejectMemberMutation={rejectMemberMutation}
+          pendingLeaveRequests={pendingLeaveRequests}
+          pendingLeaveRequestsLoading={pendingLeaveRequestsLoading}
+          pendingLeaveRequestsError={pendingLeaveRequestsError}
+          pendingLeaveRequestsErrorDetails={pendingLeaveRequestsErrorDetails}
+          pendingLeaveRequestsFetching={pendingLeaveRequestsFetching}
+          refetchPendingLeaveRequests={refetchPendingLeaveRequests}
+          approveLeaveMutation={approveLeaveMutation}
+          rejectLeaveMutation={rejectLeaveMutation}
+          membershipStatus={membershipStatus}
+          onRequestLeave={handleRequestToLeave}
+          onCancelLeave={handleCancelLeaveRequest}
+          requestingLeave={requestLeaveMutation.isPending}
+          cancellingLeave={cancelLeaveMutation.isPending}
+          leaveRejectionReason={latestLeaveRejection?.reason}
+          leaveCancellationMessage={
+            latestLeaveCancellation
+              ? 'You cancelled your leave request.'
+              : ''
+          }
           canViewMemberDirectory={canViewMemberDirectory}
           membersLoading={membersLoading}
           membersError={membersError}
@@ -385,6 +493,17 @@ export default function GroupWorkspace() {
         />
       )}
 
+      {isMember && activeSection === 'contributions' && (
+        <ContributionManagement
+          groupId={id}
+          group={group}
+          isAdmin={isAdmin}
+          currentUser={currentUser}
+          onOpenContribution={handleOpenContribution}
+          onViewPaymentHistory={handleViewPaymentHistory}
+        />
+      )}
+
       {isMember && activeSection === 'cycles' && (
         <CycleManagement
           groupId={id}
@@ -393,10 +512,26 @@ export default function GroupWorkspace() {
         />
       )}
 
+      {isMember && activeSection === 'payments' && (
+        selectedContribution ? (
+          <ContributionDetail
+            contribution={selectedContribution}
+            group={group}
+            isAdmin={isAdmin}
+            currentUser={currentUser}
+            onBack={handleBackToContributions}
+          />
+        ) : (
+          <PaymentHistory
+            groupId={id}
+            isAdmin={isAdmin}
+            currentUser={currentUser}
+          />
+        )
+      )}
+
       {isMember &&
-        activeSection !== 'overview' &&
-        activeSection !== 'members' &&
-        activeSection !== 'cycles' &&
+        ['payouts', 'activity'].includes(activeSection) &&
         currentSection && (
           <Card
             title={sectionDescriptions[activeSection].title}
@@ -412,8 +547,8 @@ export default function GroupWorkspace() {
               </p>
 
               <p className="mt-3 text-sm text-text-muted">
-                This section is ready for its live backend data and actions.
-                No sample financial or membership records are being displayed.
+                This section will be populated with frontend sample data
+                before its backend integration.
               </p>
             </div>
           </Card>
