@@ -1,5 +1,5 @@
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 const features = [
@@ -69,13 +69,33 @@ function SectionHeading({ eyebrow, title, description }) {
 }
 
 export default function HomePage() {
+  const [isLoggedIn, setIsLoggedIn] = useState(() =>
+    Boolean(localStorage.getItem('access')),
+  )
+
+  // Keep homepage authentication state synchronized with PageLayout.
+  useEffect(() => {
+    const updateAuthState = () => {
+      setIsLoggedIn(Boolean(localStorage.getItem('access')))
+    }
+
+    window.addEventListener('storage', updateAuthState)
+    window.addEventListener('auth-change', updateAuthState)
+
+    return () => {
+      window.removeEventListener('storage', updateAuthState)
+      window.removeEventListener('auth-change', updateAuthState)
+    }
+  }, [])
+
+  // Homepage reveal animations.
   useEffect(() => {
     const elements = document.querySelectorAll(
-      '[data-home-reveal]'
+      '[data-home-reveal]',
     )
 
     const reduceMotion = window.matchMedia(
-      '(prefers-reduced-motion: reduce)'
+      '(prefers-reduced-motion: reduce)',
     ).matches
 
     if (reduceMotion) {
@@ -104,7 +124,7 @@ export default function HomePage() {
       {
         threshold: 0.12,
         rootMargin: '0px 0px -35px 0px',
-      }
+      },
     )
 
     elements.forEach((element) => observer.observe(element))
@@ -486,12 +506,14 @@ export default function HomePage() {
               Create an account
             </Link>
 
-            <Link
-              to="/login"
-              className="rounded-xl border border-border px-7 py-3.5 text-sm font-bold transition duration-300 hover:-translate-y-0.5 hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#B18B48]"
-            >
-              Login
-            </Link>
+            {!isLoggedIn && (
+              <Link
+                to="/login"
+                className="rounded-xl border border-border px-7 py-3.5 text-sm font-bold transition duration-300 hover:-translate-y-0.5 hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#B18B48]"
+              >
+                Login
+              </Link>
+            )}
           </div>
         </div>
       </section>

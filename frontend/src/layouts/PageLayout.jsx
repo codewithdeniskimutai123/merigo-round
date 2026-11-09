@@ -2,6 +2,7 @@
 import { Link, NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import ThemeToggle from '../components/ThemeToggle.jsx'
+import useInactivityLogout from '../hooks/useInactivityLogout.js'
 
 export default function PageLayout({ children }) {
   const navigate = useNavigate()
@@ -10,6 +11,7 @@ export default function PageLayout({ children }) {
   const [isLoggedIn, setIsLoggedIn] = useState(
     () => Boolean(localStorage.getItem('access'))
   )
+
   const [isMenuOpen, setIsMenuOpen] = useState(false)
 
   useEffect(() => {
@@ -34,6 +36,7 @@ export default function PageLayout({ children }) {
     localStorage.removeItem('access')
     localStorage.removeItem('refresh')
     localStorage.removeItem('user')
+    localStorage.removeItem('lastActivity')
 
     setIsLoggedIn(false)
     setIsMenuOpen(false)
@@ -42,30 +45,70 @@ export default function PageLayout({ children }) {
     navigate('/login')
   }
 
-  const navLinkClass = ({ isActive }) =>
+  // Automatically log out users after 30 minutes without activity.
+  useInactivityLogout(isLoggedIn, handleLogout)
+
+  // Determine the active page using the current URL.
+  const isPathActive = (path, exact = false) => {
+    if (exact) {
+      return location.pathname === path
+    }
+
+    return (
+      location.pathname === path ||
+      location.pathname.startsWith(`${path}/`)
+    )
+  }
+
+  // Main navigation active styling.
+  const navLinkClass = (path, exact = false) =>
     `rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-      isActive
+      isPathActive(path, exact)
         ? 'bg-primary/10 text-primary'
         : 'text-text hover:bg-surface hover:text-primary'
     }`
 
+  // Reusable styling for all contact links.
+  const contactLinkClass =
+    'group flex w-fit items-center gap-2.5 rounded-md px-2 py-1.5 text-xs text-text/75 transition-all duration-300 ease-out hover:translate-x-1 hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary'
+
+  // Footer navigation active styling.
+  const footerNavLinkClass = (path, exact = false) =>
+    `${contactLinkClass} ${
+      isPathActive(path, exact)
+        ? 'bg-primary/10 text-primary'
+        : ''
+    }`
+
+  const contactIconClass =
+    'h-5 w-5 shrink-0 transition-all duration-300 ease-out group-hover:scale-125 group-hover:-translate-y-0.5'
+
   const renderNavigation = () => (
     <>
-      <NavLink to="/" end className={navLinkClass}>
+      <NavLink to="/" end className={navLinkClass('/', true)}>
         Home
       </NavLink>
 
-      <NavLink to="/groups/create" className={navLinkClass}>
+      <NavLink
+        to="/groups/create"
+        className={navLinkClass('/groups/create')}
+      >
         Create a group
       </NavLink>
 
       {isLoggedIn ? (
         <>
-          <NavLink to="/dashboard" className={navLinkClass}>
+          <NavLink
+            to="/dashboard"
+            className={navLinkClass('/dashboard')}
+          >
             Dashboard
           </NavLink>
 
-          <NavLink to="/profile" className={navLinkClass}>
+          <NavLink
+            to="/profile"
+            className={navLinkClass('/profile')}
+          >
             My profile
           </NavLink>
 
@@ -79,11 +122,17 @@ export default function PageLayout({ children }) {
         </>
       ) : (
         <>
-          <NavLink to="/login" className={navLinkClass}>
+          <NavLink
+            to="/login"
+            className={navLinkClass('/login', true)}
+          >
             Login
           </NavLink>
 
-          <NavLink to="/register" className={navLinkClass}>
+          <NavLink
+            to="/register"
+            className={navLinkClass('/register', true)}
+          >
             Register
           </NavLink>
         </>
@@ -91,22 +140,12 @@ export default function PageLayout({ children }) {
     </>
   )
 
-  // Reusable styling for all contact links
-  const contactLinkClass =
-    'group flex w-fit items-center gap-2.5 rounded-md px-2 py-1.5 text-xs text-text/75 transition-all duration-300 ease-out hover:translate-x-1 hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary'
-
-  const contactIconClass =
-    'h-5 w-5 shrink-0 transition-all duration-300 ease-out group-hover:scale-125 group-hover:-translate-y-0.5'
-
   return (
     <div className="flex min-h-screen flex-col bg-page text-text transition-colors">
-
       {/* Header */}
       <header className="sticky top-0 z-50 border-b border-border bg-surface/95 backdrop-blur-md">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-
           <div className="flex h-16 items-center justify-between">
-
             {/* Brand */}
             <Link
               to="/"
@@ -172,7 +211,6 @@ export default function PageLayout({ children }) {
               {renderNavigation()}
             </nav>
           </div>
-
         </div>
       </header>
 
@@ -185,9 +223,7 @@ export default function PageLayout({ children }) {
 
       {/* Footer */}
       <footer className="border-t border-border/60 bg-surface/30 backdrop-blur-md">
-
         <div className="mx-auto flex w-full max-w-7xl flex-wrap items-start justify-start gap-x-8 gap-y-8 px-5 py-8 sm:px-8 lg:px-10">
-
           {/* Section 1: Merigo Round */}
           <div className="min-w-[220px] flex-[1_1_220px] space-y-2">
             <h3 className="text-sm font-bold text-primary">
@@ -207,21 +243,34 @@ export default function PageLayout({ children }) {
             </h3>
 
             <div className="flex flex-col items-start gap-1">
-              <Link to="/" className={contactLinkClass}>
+              <NavLink
+                to="/"
+                end
+                className={footerNavLinkClass('/', true)}
+              >
                 <span>Home</span>
-              </Link>
+              </NavLink>
 
-              <Link to="/dashboard" className={contactLinkClass}>
+              <NavLink
+                to="/dashboard"
+                className={footerNavLinkClass('/dashboard')}
+              >
                 <span>Dashboard</span>
-              </Link>
+              </NavLink>
 
-              <Link to="/profile" className={contactLinkClass}>
+              <NavLink
+                to="/profile"
+                className={footerNavLinkClass('/profile')}
+              >
                 <span>My Profile</span>
-              </Link>
+              </NavLink>
 
-              <Link to="/settings" className={contactLinkClass}>
+              <NavLink
+                to="/settings"
+                className={footerNavLinkClass('/settings')}
+              >
                 <span>Settings</span>
-              </Link>
+              </NavLink>
             </div>
           </div>
 
@@ -232,10 +281,9 @@ export default function PageLayout({ children }) {
             </h3>
 
             <div className="flex flex-col items-start gap-1">
-
               {/* WhatsApp */}
               <a
-                href="https://wa.me/254706017340?text=Hello%20Merigo%20Round%20team%2C%20I%20visited%20your%20website%20and%20would%20like%20to%20know%20more%20about%20your%20platform.%20Please%20assist%20me."
+                href="https://wa.me/254706017340?text=Hello%20Merigo%20Round%20team%2C%20I%20visited%20your%20website%20and%20would%20like%20to%20know%20more%20about%20your%20platform.%20Please%20assist%20me"
                 target="_blank"
                 rel="noopener noreferrer"
                 className={contactLinkClass}
@@ -302,7 +350,6 @@ export default function PageLayout({ children }) {
                 </svg>
                 <span>Instagram</span>
               </a>
-
             </div>
           </div>
 
@@ -331,7 +378,6 @@ export default function PageLayout({ children }) {
               </a>
             </div>
           </div>
-
         </div>
 
         {/* Copyright */}
@@ -340,7 +386,6 @@ export default function PageLayout({ children }) {
             © {new Date().getFullYear()} Apexcore. All rights reserved.
           </p>
         </div>
-
       </footer>
     </div>
   )

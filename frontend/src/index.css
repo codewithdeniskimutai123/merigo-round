@@ -1,13 +1,34 @@
 
+
 @import "tailwindcss";
 
 @theme {
+  /* Existing brand colors */
   --color-brand-50: #f0fdf4;
   --color-brand-100: #dcfce7;
   --color-brand-500: #22c55e;
   --color-brand-600: #16a34a;
   --color-brand-700: #15803d;
 
+  /* Primary color palette */
+  --color-primary-50: #f0fdf4;
+  --color-primary-100: #dcfce7;
+  --color-primary-200: #bbf7d0;
+  --color-primary-300: #86efac;
+  --color-primary-400: #4ade80;
+  --color-primary-500: #22c55e;
+  --color-primary-600: #16a34a;
+  --color-primary-700: #15803d;
+  --color-primary-800: #166534;
+  --color-primary-900: #14532d;
+
+  /* Main primary colors */
+  --color-primary: #16a34a;
+  --color-primary-hover: #15803d;
+  --color-primary-light: #f0fdf4;
+  --color-primary-foreground: #ffffff;
+
+  /* Existing application colors */
   --color-page: #f8fafc;
   --color-surface: #ffffff;
   --color-border: #e2e8f0;
@@ -15,8 +36,15 @@
   --color-text-muted: #64748b;
 }
 
+/* Light theme */
 :root {
   color-scheme: light;
+
+  --color-primary: #16a34a;
+  --color-primary-hover: #15803d;
+  --color-primary-light: #f0fdf4;
+  --color-primary-foreground: #ffffff;
+
   --color-page: #f8fafc;
   --color-surface: #ffffff;
   --color-border: #e2e8f0;
@@ -24,16 +52,21 @@
   --color-text-muted: #64748b;
 }
 
+/* Dark theme */
 :root.dark {
   color-scheme: dark;
+
+  --color-primary: #4ade80;
+  --color-primary-hover: #86efac;
+  --color-primary-light: #14532d;
+  --color-primary-foreground: #052e16;
+
   --color-page: #0b1220;
   --color-surface: #111827;
   --color-border: #374151;
   --color-text: #e5e7eb;
   --color-text-muted: #9ca3af;
 }
-
-
 
 /* Hide scrollbar but preserve page scrolling */
 html {
