@@ -12,9 +12,7 @@ function formatAmount(amount) {
 function formatDate(date) {
   if (!date) return 'Not scheduled'
 
-  const parsedDate = new Date(
-    `${String(date).slice(0, 10)}T00:00:00`,
-  )
+  const parsedDate = new Date(`${String(date).slice(0, 10)}T00:00:00`)
 
   if (Number.isNaN(parsedDate.getTime())) {
     return 'Not available'
@@ -30,13 +28,33 @@ function formatDate(date) {
 function getStatusStyles(status) {
   const styles = {
     ACTIVE: 'bg-green-100 text-green-800',
+    WAITING_FOR_PAYMENT: 'bg-amber-100 text-amber-800',
+    READY_FOR_PAYOUT: 'bg-blue-100 text-blue-800',
     COMPLETED: 'bg-blue-100 text-blue-800',
-    PENDING: 'bg-amber-100 text-amber-800',
-    DRAFT: 'bg-surface-secondary text-text-muted',
+    UPCOMING: 'bg-surface-secondary text-text-muted',
     CANCELLED: 'bg-red-100 text-red-800',
   }
 
   return styles[status] || 'bg-surface-secondary text-text-muted'
+}
+
+function getStatusMessage(status) {
+  const messages = {
+    ACTIVE:
+      'Your payout round is currently active. Check your group payment instructions and follow the contribution schedule.',
+    WAITING_FOR_PAYMENT:
+      'Your payout round is waiting for the required member payments.',
+    READY_FOR_PAYOUT:
+      'The required payments have been received. Your payout is ready for processing.',
+    COMPLETED:
+      'Your payout round has been completed.',
+    UPCOMING:
+      'Your payout round is scheduled. You can track its progress as the cycle advances.',
+    CANCELLED:
+      'This payout round has been cancelled. Contact your group administrator for more information.',
+  }
+
+  return messages[status] || 'Your payout-round information is shown above.'
 }
 
 export default function MyRound({ myRound, isLoading }) {
@@ -51,7 +69,6 @@ export default function MyRound({ myRound, isLoading }) {
   }
 
   // The backend returns the serialized Round directly.
-  // It does not wrap the round inside a "round" property.
   const round = myRound
 
   if (!round || !round.id) {
@@ -74,7 +91,7 @@ export default function MyRound({ myRound, isLoading }) {
     )
   }
 
-  const status = round.status || 'PENDING'
+  const status = round.status || 'UPCOMING'
 
   return (
     <Card
@@ -96,7 +113,7 @@ export default function MyRound({ myRound, isLoading }) {
           <span
             className={`rounded-full px-3 py-1.5 text-xs font-semibold ${getStatusStyles(status)}`}
           >
-            {status}
+            {status.replaceAll('_', ' ')}
           </span>
         </div>
 
@@ -120,28 +137,32 @@ export default function MyRound({ myRound, isLoading }) {
               {formatDate(round.start_date || round.due_date)}
             </p>
           </div>
+
+          <div className="rounded-lg border border-border bg-surface-secondary p-4">
+            <p className="text-xs text-text-muted">
+              Round start date
+            </p>
+
+            <p className="mt-2 text-sm font-semibold text-text">
+              {formatDate(round.start_date)}
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-border bg-surface-secondary p-4">
+            <p className="text-xs text-text-muted">
+              Contribution due date
+            </p>
+
+            <p className="mt-2 text-sm font-semibold text-text">
+              {formatDate(round.due_date)}
+            </p>
+          </div>
         </div>
 
         <div className="border-t border-border pt-4">
-          {status === 'ACTIVE' && (
-            <p className="text-sm leading-6 text-text-muted">
-              Your payout round is currently active. Check your group
-              payment instructions and ensure your contributions are up to date.
-            </p>
-          )}
-
-          {status === 'COMPLETED' && (
-            <p className="text-sm leading-6 text-text-muted">
-              Your payout round has been completed.
-            </p>
-          )}
-
-          {status === 'PENDING' && (
-            <p className="text-sm leading-6 text-text-muted">
-              Your payout round is scheduled. You will be able to track
-              its progress as the cycle advances.
-            </p>
-          )}
+          <p className="text-sm leading-6 text-text-muted">
+            {getStatusMessage(status)}
+          </p>
         </div>
       </div>
     </Card>

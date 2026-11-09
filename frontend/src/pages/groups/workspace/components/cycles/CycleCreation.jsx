@@ -1,30 +1,82 @@
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import Card from '../../../../../components/Card.jsx'
 import Button from '../../../../../components/Button.jsx'
 import Input from '../../../../../components/Input.jsx'
 
+function formatDateTimeLocal(value) {
+  if (!value) return ''
+
+  const date = new Date(value)
+
+  if (!Number.isFinite(date.getTime())) {
+    return ''
+  }
+
+  const offset = date.getTimezoneOffset() * 60000
+
+  return new Date(date.getTime() - offset)
+    .toISOString()
+    .slice(0, 16)
+}
+
 export default function CycleCreation({
+  cycle = null,
   onCreateCycle,
-  isCreating,
+  onUpdateCycle,
+  onCancelEdit,
+  isCreating = false,
+  isUpdating = false,
   group,
 }) {
   const [startDate, setStartDate] = useState('')
   const [swapDeadline, setSwapDeadline] = useState('')
   const [errors, setErrors] = useState({})
 
+  const isEditing = Boolean(cycle)
+  const isSaving = isCreating || isUpdating
+
+  // Populate the form whenever the selected editing cycle changes.
+  // Reset it when the administrator cancels editing.
+  useEffect(() => {
+    if (cycle) {
+      setStartDate(
+        cycle.start_date
+          ? String(cycle.start_date).slice(0, 10)
+          : '',
+      )
+
+      setSwapDeadline(
+        formatDateTimeLocal(cycle.swap_deadline),
+      )
+    } else {
+      setStartDate('')
+      setSwapDeadline('')
+    }
+
+    setErrors({})
+  }, [
+    cycle?.id,
+    cycle?.start_date,
+    cycle?.swap_deadline,
+  ])
+
   function handleSubmit(event) {
     event.preventDefault()
+
+    if (isSaving) return
 
     const newErrors = {}
 
     if (!startDate) {
-      newErrors.start_date = 'Please select a cycle start date.'
+      newErrors.start_date =
+        'Please select a cycle start date.'
     }
 
     if (!swapDeadline) {
-      newErrors.swap_deadline = 'Please select a swap deadline.'
+      newErrors.swap_deadline =
+        'Please select a swap deadline.'
     } else {
       const deadlineDate = new Date(swapDeadline)
 
@@ -44,19 +96,44 @@ export default function CycleCreation({
 
     setErrors({})
 
-    onCreateCycle({
+    const cycleData = {
       start_date: startDate,
       swap_deadline: new Date(swapDeadline).toISOString(),
-    })
+    }
+
+    if (isEditing) {
+      if (!onUpdateCycle) return
+
+      onUpdateCycle(cycleData)
+    } else {
+      if (!onCreateCycle) return
+
+      onCreateCycle(cycleData)
+    }
+  }
+
+  function handleCancelEdit() {
+    if (isSaving) return
+
+    setErrors({})
+    onCancelEdit?.()
   }
 
   return (
     <Card
-      title="Create a savings cycle"
+      title={
+        isEditing
+          ? 'Edit savings cycle'
+          : 'Create a savings cycle'
+      }
       description={
-        group?.name
-          ? `Set up a new cycle for ${group.name}.`
-          : 'Set the dates for the new savings cycle.'
+        isEditing
+          ? `Update the dates for ${
+              cycle.name || `Cycle ${cycle.cycle_number}`
+            }.`
+          : group?.name
+            ? `Set up a new cycle for ${group.name}.`
+            : 'Set the dates for the new savings cycle.'
       }
     >
       <form onSubmit={handleSubmit} className="space-y-5">
@@ -77,7 +154,7 @@ export default function CycleCreation({
             }}
             error={errors.start_date}
             required
-            disabled={isCreating}
+            disabled={isSaving}
           />
 
           <Input
@@ -96,24 +173,46 @@ export default function CycleCreation({
             }}
             error={errors.swap_deadline}
             required
-            disabled={isCreating}
+            disabled={isSaving}
           />
         </div>
 
         <div className="rounded-lg border border-border bg-surface-secondary p-4">
           <p className="text-sm leading-6 text-text-muted">
-            Members will be able to select their draw options and request
-            position swaps before the swap deadline. The administrator
-            can finalize the payout order after the deadline.
+            Members will be able to select their draw options and
+            request position swaps before the swap deadline.
+            The administrator can finalize the payout order
+            after the deadline.
           </p>
         </div>
 
         <div className="flex flex-wrap justify-end gap-3">
+          {isEditing && (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleCancelEdit}
+              disabled={isSaving}
+            >
+              Cancel editing
+            </Button>
+          )}
+
           <Button
             type="submit"
-            disabled={isCreating}
+            disabled={
+              isSaving ||
+              (isEditing && !onUpdateCycle) ||
+              (!isEditing && !onCreateCycle)
+            }
           >
-            {isCreating ? 'Creating cycle...' : 'Create cycle'}
+            {isSaving
+              ? isEditing
+                ? 'Updating cycle...'
+                : 'Creating cycle...'
+              : isEditing
+                ? 'Save changes'
+                : 'Create cycle'}
           </Button>
         </div>
       </form>

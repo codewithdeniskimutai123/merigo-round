@@ -23,12 +23,6 @@ function getMemberName(member) {
   return fullName || member?.username || 'Group member'
 }
 
-function getSwapMemberName(member) {
-  if (!member) return 'Unknown member'
-
-  return getMemberName(member)
-}
-
 function getStatusLabel(status) {
   const labels = {
     PENDING: 'Pending',
@@ -55,6 +49,18 @@ function getStatusStyles(status) {
   return styles[status] || styles.EXPIRED
 }
 
+function formatDateTime(value) {
+  if (!value) return 'Not available'
+
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return 'Not available'
+  }
+
+  return date.toLocaleString()
+}
+
 export default function PositionSwaps({
   groupId,
   cycleId,
@@ -73,7 +79,6 @@ export default function PositionSwaps({
   const acceptSwapMutation = useAcceptCycleSwap(groupId, cycleId)
   const rejectSwapMutation = useRejectCycleSwap(groupId, cycleId)
 
-  // Keep the deadline check current while the page remains open.
   useEffect(() => {
     const interval = setInterval(() => {
       setCurrentTime(Date.now())
@@ -89,7 +94,6 @@ export default function PositionSwaps({
   const orderStatus = orderData?.order_status
   const myMembershipId = orderData?.my_draw_status?.membership_id
 
-  // Read the deadline from the order details API response.
   const swapDeadline = orderData?.swap_deadline ?? null
 
   const parsedSwapDeadline = swapDeadline
@@ -104,7 +108,6 @@ export default function PositionSwaps({
     hasValidSwapDeadline &&
     currentTime >= parsedSwapDeadline
 
-  // Exclude the logged-in member from possible swap targets.
   const availableMembers = members.filter(
     (member) =>
       String(member.membership_id) !== String(myMembershipId),
@@ -120,13 +123,11 @@ export default function PositionSwaps({
     hasValidSwapDeadline &&
     !swapDeadlinePassed
 
-  // Requests sent by the logged-in member.
   const outgoingRequests = swaps.filter(
     (swap) =>
       String(swap.requester?.membership_id) === String(myMembershipId),
   )
 
-  // Pending requests received by the logged-in member.
   const incomingRequests = swaps.filter(
     (swap) =>
       swap.status === 'PENDING' &&
@@ -138,7 +139,9 @@ export default function PositionSwaps({
     event.preventDefault()
 
     if (!hasValidSwapDeadline) {
-      toast.error('The swap deadline is unavailable. Please refresh the page.')
+      toast.error(
+        'The swap deadline is unavailable. Please refresh the page.',
+      )
       return
     }
 
@@ -195,8 +198,11 @@ export default function PositionSwaps({
 
   function renderSwapRequest(
     swap,
-    showActions = false,
-    isIncoming = false,
+    {
+      showActions = false,
+      isIncoming = false,
+      adminMonitoring = false,
+    } = {},
   ) {
     const requester = swap.requester
     const target = swap.target
@@ -206,15 +212,30 @@ export default function PositionSwaps({
     return (
       <article
         key={swap.id}
-        className="group rounded-xl border border-border bg-surface p-4 shadow-sm transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-brand-600/40 hover:shadow-md sm:p-5"
+        className="rounded-xl border border-border bg-surface p-4 shadow-sm transition-all duration-200 hover:border-brand-600/40 hover:shadow-md sm:p-5"
       >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            {isIncoming ? (
+            {adminMonitoring ? (
               <>
                 <p className="text-sm font-semibold leading-6 text-text">
-                  {getSwapMemberName(requester)} requested to swap
-                  positions with you.
+                  {getMemberName(requester)} requested a position swap
+                  with {getMemberName(target)}.
+                </p>
+
+                <p className="mt-2 text-sm leading-6 text-text-muted">
+                  Requester: {getMemberName(requester)}
+                </p>
+
+                <p className="text-sm leading-6 text-text-muted">
+                  Target: {getMemberName(target)}
+                </p>
+              </>
+            ) : isIncoming ? (
+              <>
+                <p className="text-sm font-semibold leading-6 text-text">
+                  {getMemberName(requester)} requested to swap positions
+                  with you.
                 </p>
 
                 <p className="mt-2 text-sm leading-6 text-text-muted">
@@ -226,16 +247,16 @@ export default function PositionSwaps({
               <>
                 <p className="text-sm font-semibold leading-6 text-text">
                   You requested to swap positions with{' '}
-                  {getSwapMemberName(target)}.
+                  {getMemberName(target)}.
                 </p>
 
                 <p className="mt-2 text-sm leading-6 text-text-muted">
                   {swap.status === 'PENDING'
-                    ? `Waiting for ${getSwapMemberName(target)} to respond.`
+                    ? `Waiting for ${getMemberName(target)} to respond.`
                     : swap.status === 'ACCEPTED'
-                      ? `${getSwapMemberName(target)} accepted your request.`
+                      ? `${getMemberName(target)} accepted your request.`
                       : swap.status === 'REJECTED'
-                        ? `${getSwapMemberName(target)} rejected your request.`
+                        ? `${getMemberName(target)} rejected your request.`
                         : 'Position exchange request details.'}
                 </p>
               </>
@@ -251,16 +272,12 @@ export default function PositionSwaps({
 
         <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-border pt-3">
           <p className="text-xs text-text-muted">
-            Requested:{' '}
-            {swap.requested_at
-              ? new Date(swap.requested_at).toLocaleString()
-              : 'Not available'}
+            Requested: {formatDateTime(swap.requested_at)}
           </p>
 
           {swap.responded_at && (
             <p className="text-xs text-text-muted">
-              Responded:{' '}
-              {new Date(swap.responded_at).toLocaleString()}
+              Responded: {formatDateTime(swap.responded_at)}
             </p>
           )}
         </div>
@@ -306,7 +323,6 @@ export default function PositionSwaps({
       description="Members can request to exchange their payout positions before the order is finalized."
     >
       <div className="space-y-7">
-
         {/* Request a swap */}
         {canShowRequestForm && (
           <form
@@ -449,7 +465,10 @@ export default function PositionSwaps({
           ) : (
             <div className="space-y-3">
               {incomingRequests.map((swap) =>
-                renderSwapRequest(swap, !isAdmin, true)
+                renderSwapRequest(swap, {
+                  showActions: !isAdmin,
+                  isIncoming: true,
+                }),
               )}
             </div>
           )}
@@ -484,21 +503,64 @@ export default function PositionSwaps({
           ) : (
             <div className="space-y-3">
               {outgoingRequests.map((swap) =>
-                renderSwapRequest(swap)
+                renderSwapRequest(swap),
               )}
             </div>
           )}
         </section>
 
-        {/* Admin monitoring */}
+        {/* Administrator monitoring */}
         {isAdmin && (
+          <section className="border-t border-border pt-6">
+            <div className="mb-4">
+              <h3 className="font-semibold text-text">
+                All cycle swap requests
+              </h3>
+
+              <p className="mt-1 text-sm leading-6 text-text-muted">
+                Monitor every position-swap request in this cycle,
+                including the requester, target member, and current status.
+                Administrators cannot accept or reject requests on behalf
+                of members.
+              </p>
+            </div>
+
+            {isLoading ? (
+              <p className="py-8 text-center text-sm text-text-muted">
+                Loading cycle swap activity...
+              </p>
+            ) : swaps.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border bg-surface-secondary/30 px-4 py-8 text-center">
+                <p className="text-sm font-semibold text-text">
+                  No swap activity yet
+                </p>
+
+                <p className="mt-1 text-sm text-text-muted">
+                  Position-swap requests will appear here when members
+                  submit them.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {swaps.map((swap) =>
+                  renderSwapRequest(swap, {
+                    adminMonitoring: true,
+                  }),
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
+        {!isAdmin && (
           <p className="border-t border-border pt-5 text-xs leading-6 text-text-muted">
-            Swap requests are handled by the requesting and target members.
-            The administrator can monitor their status before finalizing
-            the payout order.
+            Only the member receiving a swap request can accept or reject
+            it. Once the payout order is finalized, position swaps are
+            no longer available.
           </p>
         )}
       </div>
     </Card>
   )
 }
+

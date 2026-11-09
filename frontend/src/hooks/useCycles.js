@@ -1,9 +1,12 @@
+
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import {
   getGroupCycles,
   createCycle,
+  updateCycle,
+  getCycleOverview,
   getCycleDrawOptions,
   selectCycleDrawOption,
   getCycleOrderDetails,
@@ -17,7 +20,13 @@ import {
   getMyCycleRound,
   activateCycle,
   activateNextRound,
+  extendRoundDueDate,
+  getRoundDateHistory,
 } from '../api/cycleApi'
+
+// ==================================================
+// ERROR HANDLING
+// ==================================================
 
 function getErrorMessage(error, fallback) {
   const responseData = error.response?.data
@@ -27,20 +36,32 @@ function getErrorMessage(error, fallback) {
   }
 
   if (responseData && typeof responseData === 'object') {
-    return Object.values(responseData).flat().join(' ')
+    return Object.values(responseData)
+      .flat()
+      .filter(Boolean)
+      .join(' ')
   }
 
   return fallback
 }
 
+// ==================================================
+// QUERY INVALIDATION
+// ==================================================
+
 function invalidateCycleQueries(queryClient, groupId, cycleId) {
-    
   queryClient.invalidateQueries({
     queryKey: ['group', groupId, 'cycles'],
   })
 
+  if (!cycleId) return
+
   queryClient.invalidateQueries({
     queryKey: ['cycle', groupId, cycleId],
+  })
+
+  queryClient.invalidateQueries({
+    queryKey: ['cycle', groupId, cycleId, 'overview'],
   })
 
   queryClient.invalidateQueries({
@@ -62,15 +83,29 @@ function invalidateCycleQueries(queryClient, groupId, cycleId) {
   queryClient.invalidateQueries({
     queryKey: ['cycle', groupId, cycleId, 'my-round'],
   })
+
+  queryClient.invalidateQueries({
+    queryKey: ['cycle', groupId, cycleId, 'round-date-history'],
+  })
 }
 
-// Cycle queries
+// ==================================================
+// CYCLE QUERIES
+// ==================================================
 
 export function useGroupCycles(groupId, enabled = true) {
   return useQuery({
     queryKey: ['group', groupId, 'cycles'],
     queryFn: () => getGroupCycles(groupId),
     enabled: Boolean(groupId) && enabled,
+  })
+}
+
+export function useCycleOverview(groupId, cycleId, enabled = true) {
+  return useQuery({
+    queryKey: ['cycle', groupId, cycleId, 'overview'],
+    queryFn: () => getCycleOverview(groupId, cycleId),
+    enabled: Boolean(groupId) && Boolean(cycleId) && enabled,
   })
 }
 
@@ -114,7 +149,9 @@ export function useMyCycleRound(groupId, cycleId, enabled = true) {
   })
 }
 
-// Cycle mutations
+// ==================================================
+// CYCLE CREATION
+// ==================================================
 
 export function useCreateCycle(groupId) {
   const queryClient = useQueryClient()
@@ -123,22 +160,47 @@ export function useCreateCycle(groupId) {
     mutationFn: (cycleData) => createCycle(groupId, cycleData),
 
     onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ['group', groupId, 'cycles'],
-      })
+      invalidateCycleQueries(queryClient, groupId)
 
       toast.success('Cycle created successfully.')
     },
 
     onError: (error) => {
       toast.error(
-        getErrorMessage(error, 'Unable to create cycle. Please try again.'),
+        getErrorMessage(error, 'Unable to create cycle. Please try again.')
       )
     },
   })
 }
 
-// Draw mutations
+// ==================================================
+// CYCLE UPDATE
+// ==================================================
+
+export function useUpdateCycle(groupId, cycleId) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (cycleData) =>
+      updateCycle(groupId, cycleId, cycleData),
+
+    onSuccess: () => {
+      invalidateCycleQueries(queryClient, groupId, cycleId)
+
+      toast.success('Cycle updated successfully.')
+    },
+
+    onError: (error) => {
+      toast.error(
+        getErrorMessage(error, 'Unable to update cycle.')
+      )
+    },
+  })
+}
+
+// ==================================================
+// DRAW MUTATIONS
+// ==================================================
 
 export function useSelectCycleDrawOption(groupId, cycleId) {
   const queryClient = useQueryClient()
@@ -155,13 +217,15 @@ export function useSelectCycleDrawOption(groupId, cycleId) {
 
     onError: (error) => {
       toast.error(
-        getErrorMessage(error, 'Unable to submit your draw selection.'),
+        getErrorMessage(error, 'Unable to submit your draw selection.')
       )
     },
   })
 }
 
-// Swap mutations
+// ==================================================
+// POSITION SWAP MUTATIONS
+// ==================================================
 
 export function useRequestCycleSwap(groupId, cycleId) {
   const queryClient = useQueryClient()
@@ -178,7 +242,7 @@ export function useRequestCycleSwap(groupId, cycleId) {
 
     onError: (error) => {
       toast.error(
-        getErrorMessage(error, 'Unable to submit swap request.'),
+        getErrorMessage(error, 'Unable to submit swap request.')
       )
     },
   })
@@ -199,7 +263,7 @@ export function useAcceptCycleSwap(groupId, cycleId) {
 
     onError: (error) => {
       toast.error(
-        getErrorMessage(error, 'Unable to accept swap request.'),
+        getErrorMessage(error, 'Unable to accept swap request.')
       )
     },
   })
@@ -220,13 +284,15 @@ export function useRejectCycleSwap(groupId, cycleId) {
 
     onError: (error) => {
       toast.error(
-        getErrorMessage(error, 'Unable to reject swap request.'),
+        getErrorMessage(error, 'Unable to reject swap request.')
       )
     },
   })
 }
 
-// Order mutation
+// ==================================================
+// ORDER FINALIZATION
+// ==================================================
 
 export function useFinalizeCycleOrder(groupId, cycleId) {
   const queryClient = useQueryClient()
@@ -242,13 +308,15 @@ export function useFinalizeCycleOrder(groupId, cycleId) {
 
     onError: (error) => {
       toast.error(
-        getErrorMessage(error, 'Unable to finalize cycle order.'),
+        getErrorMessage(error, 'Unable to finalize cycle order.')
       )
     },
   })
 }
 
-// Round mutations
+// ==================================================
+// ROUND CREATION
+// ==================================================
 
 export function useCreateCycleRounds(groupId, cycleId) {
   const queryClient = useQueryClient()
@@ -264,13 +332,15 @@ export function useCreateCycleRounds(groupId, cycleId) {
 
     onError: (error) => {
       toast.error(
-        getErrorMessage(error, 'Unable to create cycle rounds.'),
+        getErrorMessage(error, 'Unable to create cycle rounds.')
       )
     },
   })
 }
 
-// Activation mutations
+// ==================================================
+// CYCLE ACTIVATION
+// ==================================================
 
 export function useActivateCycle(groupId, cycleId) {
   const queryClient = useQueryClient()
@@ -286,7 +356,7 @@ export function useActivateCycle(groupId, cycleId) {
 
     onError: (error) => {
       toast.error(
-        getErrorMessage(error, 'Unable to activate cycle.'),
+        getErrorMessage(error, 'Unable to activate cycle.')
       )
     },
   })
@@ -306,7 +376,64 @@ export function useActivateNextRound(groupId, cycleId) {
 
     onError: (error) => {
       toast.error(
-        getErrorMessage(error, 'Unable to activate the next round.'),
+        getErrorMessage(error, 'Unable to activate the next round.')
+      )
+    },
+  })
+}
+
+// ==================================================
+// ROUND DATE HISTORY
+// ==================================================
+
+export function useRoundDateHistory(
+  cycleId,
+  roundId,
+  enabled = true
+) {
+  return useQuery({
+    queryKey: [
+      'cycle',
+      cycleId,
+      'round',
+      roundId,
+      'date-history',
+    ],
+    queryFn: () => getRoundDateHistory(cycleId, roundId),
+    enabled: Boolean(cycleId) && Boolean(roundId) && enabled,
+  })
+}
+
+// ==================================================
+// ROUND DUE-DATE EXTENSION
+// ==================================================
+
+export function useExtendRoundDueDate(cycleId, roundId) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (dateData) =>
+      extendRoundDueDate(cycleId, roundId, dateData),
+
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ['group'],
+      })
+
+      queryClient.invalidateQueries({
+        queryKey: ['cycle'],
+      })
+
+      queryClient.invalidateQueries({
+        queryKey: ['round'],
+      })
+
+      toast.success('Round due date updated successfully.')
+    },
+
+    onError: (error) => {
+      toast.error(
+        getErrorMessage(error, 'Unable to extend round due date.')
       )
     },
   })

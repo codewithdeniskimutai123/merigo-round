@@ -1,132 +1,176 @@
+
 import api from './axios'
 
+// ==================================================
+// CYCLE MANAGEMENT
+// ==================================================
 
 export async function getGroupCycles(groupId) {
   const response = await api.get(
-    `/api/groups/${groupId}/cycles/`,
+    `/api/groups/${groupId}/cycles/`
   )
-
   return response.data
 }
 
 export async function createCycle(groupId, cycleData) {
   const response = await api.post(
     `/api/groups/${groupId}/cycles/create/`,
-    cycleData,
+    cycleData
   )
-
   return response.data
 }
 
+export async function updateCycle(groupId, cycleId, cycleData) {
+  const response = await api.patch(
+    `/api/groups/${groupId}/cycles/${cycleId}/update/`,
+    cycleData
+  )
+  return response.data
+}
+
+export async function getCycleOverview(groupId, cycleId) {
+  const response = await api.get(
+    `/api/groups/${groupId}/cycles/${cycleId}/overview/`
+  )
+  return response.data
+}
+
+// ==================================================
+// CYCLE DRAW
+// ==================================================
 
 export async function getCycleDrawOptions(groupId, cycleId) {
   const response = await api.get(
-    `/api/groups/${groupId}/cycles/${cycleId}/draw/options/`,
+    `/api/groups/${groupId}/cycles/${cycleId}/draw/options/`
   )
-
   return response.data
 }
-
 
 export async function selectCycleDrawOption(groupId, cycleId, token) {
   const response = await api.post(
     `/api/groups/${groupId}/cycles/${cycleId}/draw/select/`,
-    { token },
+    { token }
   )
-
   return response.data
 }
 
-
-export async function getCycleOrderDetails(groupId, cycleId) {
-  const response = await api.get(
-    `/api/groups/${groupId}/cycles/${cycleId}/order/`,
-  )
-
-  return response.data
-}
-
-export async function finalizeCycleOrder(groupId, cycleId) {
-  const response = await api.post(
-    `/api/groups/${groupId}/cycles/${cycleId}/finalize-order/`,
-  )
-
-  return response.data
-}
-
+// ==================================================
+// CYCLE POSITION SWAPS
+// ==================================================
 
 export async function getCycleSwapRequests(groupId, cycleId) {
   const response = await api.get(
-    `/api/groups/${groupId}/cycles/${cycleId}/swaps/`,
+    `/api/groups/${groupId}/cycles/${cycleId}/swaps/`
   )
-
   return response.data
 }
 
-export async function requestCycleSwap(groupId, cycleId, targetMembershipId) {
+export async function requestCycleSwap(
+  groupId,
+  cycleId,
+  targetMembershipId
+) {
   const response = await api.post(
     `/api/groups/${groupId}/cycles/${cycleId}/swaps/`,
-    { target_membership_id: targetMembershipId },
+    { target_id: targetMembershipId }
   )
-
   return response.data
 }
 
 export async function acceptCycleSwap(groupId, cycleId, swapId) {
   const response = await api.post(
-    `/api/groups/${groupId}/cycles/${cycleId}/swaps/${swapId}/accept/`,
+    `/api/groups/${groupId}/cycles/${cycleId}/swaps/${swapId}/accept/`
   )
-
   return response.data
 }
 
 export async function rejectCycleSwap(groupId, cycleId, swapId) {
   const response = await api.post(
-    `/api/groups/${groupId}/cycles/${cycleId}/swaps/${swapId}/reject/`,
+    `/api/groups/${groupId}/cycles/${cycleId}/swaps/${swapId}/reject/`
   )
-
   return response.data
 }
 
+// ==================================================
+// CYCLE ORDER
+// ==================================================
+
+export async function getCycleOrderDetails(groupId, cycleId) {
+  const response = await api.get(
+    `/api/groups/${groupId}/cycles/${cycleId}/order/`
+  )
+  return response.data
+}
+
+export async function finalizeCycleOrder(groupId, cycleId) {
+  const response = await api.post(
+    `/api/groups/${groupId}/cycles/${cycleId}/finalize-order/`
+  )
+  return response.data
+}
+
+// ==================================================
+// CYCLE ROUNDS
+// ==================================================
 
 export async function createCycleRounds(groupId, cycleId) {
   const response = await api.post(
-    `/api/groups/${groupId}/cycles/${cycleId}/rounds/create/`,
+    `/api/groups/${groupId}/cycles/${cycleId}/rounds/create/`
   )
-
   return response.data
 }
 
 export async function getCycleRounds(groupId, cycleId) {
   const response = await api.get(
-    `/api/groups/${groupId}/cycles/${cycleId}/rounds/`,
+    `/api/groups/${groupId}/cycles/${cycleId}/rounds/`
   )
-
   return response.data
 }
 
 export async function getMyCycleRound(groupId, cycleId) {
   const response = await api.get(
-    `/api/groups/${groupId}/cycles/${cycleId}/my-round/`,
+    `/api/groups/${groupId}/cycles/${cycleId}/my-round/`
   )
-
   return response.data
 }
 
-
+// ==================================================
+// CYCLE ACTIVATION AND PROGRESSION
+// ==================================================
 
 export async function activateCycle(groupId, cycleId) {
   const response = await api.post(
-    `/api/groups/${groupId}/cycles/${cycleId}/activate/`,
+    `/api/groups/${groupId}/cycles/${cycleId}/activate/`
   )
-
   return response.data
 }
 
 export async function activateNextRound(groupId, cycleId) {
   const response = await api.post(
-    `/api/groups/${groupId}/cycles/${cycleId}/rounds/activate-next/`,
+    `/api/groups/${groupId}/cycles/${cycleId}/rounds/activate-next/`
   )
+  return response.data
+}
 
+// ==================================================
+// ROUND DATE MANAGEMENT
+// ==================================================
+
+export async function extendRoundDueDate(
+  cycleId,
+  roundId,
+  dateData
+) {
+  const response = await api.post(
+    `/api/cycles/${cycleId}/rounds/${roundId}/extend-date/`,
+    dateData
+  )
+  return response.data
+}
+
+export async function getRoundDateHistory(cycleId, roundId) {
+  const response = await api.get(
+    `/api/cycles/${cycleId}/rounds/${roundId}/date-history/`
+  )
   return response.data
 }

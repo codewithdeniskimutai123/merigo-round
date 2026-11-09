@@ -7,6 +7,7 @@ import Button from '../../../../../components/Button.jsx'
 import {
   useGroupCycles,
   useCreateCycle,
+  useUpdateCycle,
   useCycleDrawOptions,
   useCycleOrderDetails,
   useCycleSwapRequests,
@@ -52,8 +53,9 @@ function ErrorState({ onRetry, isFetching }) {
 
 export default function CycleManagement({ groupId, group, isAdmin }) {
   const [selectedCycleId, setSelectedCycleId] = useState(null)
+  const [editingCycleId, setEditingCycleId] = useState(null)
 
-  // Group cycles endpoint returns a plain array.
+  // Load all cycles belonging to this group.
   const {
     data: cyclesData,
     isLoading: cyclesLoading,
@@ -73,6 +75,12 @@ export default function CycleManagement({ groupId, group, isAdmin }) {
 
   const cycleId = selectedCycle?.id
 
+  // Find the cycle currently being edited.
+  const editingCycle =
+    cycles.find(
+      (cycle) => String(cycle.id) === String(editingCycleId),
+    ) || null
+
   // Cycle draw options.
   const {
     data: drawData,
@@ -87,31 +95,36 @@ export default function CycleManagement({ groupId, group, isAdmin }) {
     refetch: refetchOrder,
   } = useCycleOrderDetails(groupId, cycleId)
 
-  // Swap requests endpoint returns a plain array.
+  // Swap requests.
   const {
     data: swapsData,
     isLoading: swapsLoading,
     refetch: refetchSwaps,
   } = useCycleSwapRequests(groupId, cycleId)
 
-  // Cycle rounds endpoint returns a plain array.
+  // Cycle rounds.
   const {
     data: roundsData,
     isLoading: roundsLoading,
     refetch: refetchRounds,
   } = useCycleRounds(groupId, cycleId)
 
-  // My round returns one serialized round directly.
-  // A 404 means the current member has no assigned round yet.
+  // The current member's assigned round.
   const {
     data: myRoundData,
     isLoading: myRoundLoading,
     refetch: refetchMyRound,
   } = useMyCycleRound(groupId, cycleId)
 
-  // Mutations.
+  // Cycle creation and editing mutations.
   const createCycleMutation = useCreateCycle(groupId)
 
+  const updateCycleMutation = useUpdateCycle(
+    groupId,
+    editingCycleId,
+  )
+
+  // Other cycle mutations.
   const finalizeOrderMutation = useFinalizeCycleOrder(
     groupId,
     cycleId,
@@ -140,8 +153,7 @@ export default function CycleManagement({ groupId, group, isAdmin }) {
     ? roundsData
     : []
 
-  // MyRound has its own loading state and should not block
-  // the other cycle components when no round exists yet.
+  // MyRound has its own loading state.
   const isCycleLoading =
     Boolean(cycleId) &&
     (
@@ -167,17 +179,52 @@ export default function CycleManagement({ groupId, group, isAdmin }) {
     ])
   }
 
+  // Create a new cycle.
   function handleCreateCycle(cycleData) {
     if (!isAdmin) return
 
     createCycleMutation.mutate(cycleData, {
       onSuccess: (response) => {
-        // The backend returns the created cycle directly.
         if (response?.id) {
           setSelectedCycleId(response.id)
         }
       },
     })
+  }
+
+  // Select a draft cycle for editing.
+  function handleEditCycle(cycle) {
+    if (!isAdmin || cycle.status !== 'DRAFT') return
+
+    setSelectedCycleId(cycle.id)
+    setEditingCycleId(cycle.id)
+  }
+
+  // Save changes to the selected cycle.
+  function handleUpdateCycle(cycleData) {
+    if (
+      !isAdmin ||
+      !editingCycleId ||
+      !editingCycle ||
+      editingCycle.status !== 'DRAFT'
+    ) {
+      return
+    }
+
+    updateCycleMutation.mutate(cycleData, {
+      onSuccess: (response) => {
+        if (response?.id) {
+          setSelectedCycleId(response.id)
+        }
+
+        setEditingCycleId(null)
+      },
+    })
+  }
+
+  // Cancel editing and return the form to creation mode.
+  function handleCancelEdit() {
+    setEditingCycleId(null)
   }
 
   function handleFinalizeOrder() {
@@ -259,7 +306,6 @@ export default function CycleManagement({ groupId, group, isAdmin }) {
     !hasRounds
 
   // Sort rounds by their actual round number.
-  // Do not assume the API returns them in the correct order.
   const firstRound = [...rounds].sort(
     (a, b) =>
       Number(a.round_number) - Number(b.round_number),
@@ -272,10 +318,6 @@ export default function CycleManagement({ groupId, group, isAdmin }) {
     hasRounds &&
     firstRound?.status === 'UPCOMING'
 
-  // A new round can only be activated when no round is active
-  // and an upcoming round exists.
-  // The backend additionally checks its scheduled start date
-  // and whether rounds have been completed in sequence.
   const canActivateNextRound =
     isAdmin &&
     isActive &&
@@ -305,10 +347,15 @@ export default function CycleManagement({ groupId, group, isAdmin }) {
         </Button>
       </section>
 
+      {/* Reusable cycle creation and editing form. */}
       {isAdmin && (
         <CycleCreation
+          cycle={editingCycle}
           onCreateCycle={handleCreateCycle}
+          onUpdateCycle={handleUpdateCycle}
+          onCancelEdit={handleCancelEdit}
           isCreating={createCycleMutation.isPending}
+          isUpdating={updateCycleMutation.isPending}
           group={group}
         />
       )}
@@ -326,32 +373,62 @@ export default function CycleManagement({ groupId, group, isAdmin }) {
         <>
           <Card
             title="Available cycles"
-            description="Select a cycle to view its draw, payout order and rounds."
+            description="Select a cycle to view its draw, payout order and rounds. Administrators can edit draft cycles."
           >
-            <div className="flex flex-wrap gap-3">
+            <div className="space-y-3">
               {cycles.map((cycle) => {
                 const selected =
                   String(cycle.id) === String(selectedCycle?.id)
 
+                const isEditing =
+                  String(cycle.id) === String(editingCycleId)
+
+                const canEdit =
+                  isAdmin && cycle.status === 'DRAFT'
+
                 return (
-                  <button
+                  <div
                     key={cycle.id}
-                    type="button"
-                    onClick={() => setSelectedCycleId(cycle.id)}
-                    className={`rounded-lg border px-4 py-3 text-left transition ${
+                    className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3 transition ${
                       selected
                         ? 'border-[#452044] bg-[#452044]/10'
-                        : 'border-border bg-surface hover:bg-surface-secondary'
+                        : 'border-border bg-surface'
                     }`}
                   >
-                    <span className="block font-semibold text-text">
-                      {cycle.name || `Cycle ${cycle.cycle_number}`}
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCycleId(cycle.id)}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <span className="block font-semibold text-text">
+                        {cycle.name || `Cycle ${cycle.cycle_number}`}
+                      </span>
 
-                    <span className="mt-1 block text-xs text-text-muted">
-                      {cycle.status}
-                    </span>
-                  </button>
+                      <span className="mt-1 block text-xs text-text-muted">
+                        {cycle.status}
+                      </span>
+                    </button>
+
+                    {canEdit && (
+                      <button
+                        type="button"
+                        onClick={() => handleEditCycle(cycle)}
+                        disabled={
+                          createCycleMutation.isPending ||
+                          updateCycleMutation.isPending
+                        }
+                        aria-label={`Edit ${cycle.name || `Cycle ${cycle.cycle_number}`}`}
+                        title="Edit cycle"
+                        className={`flex h-9 w-9 items-center justify-center rounded-lg border text-lg transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                          isEditing
+                            ? 'border-[#452044] bg-[#452044] text-white'
+                            : 'border-border text-text hover:bg-surface-secondary'
+                        }`}
+                      >
+                        ✎
+                      </button>
+                    )}
+                  </div>
                 )
               })}
             </div>
@@ -360,7 +437,10 @@ export default function CycleManagement({ groupId, group, isAdmin }) {
           {selectedCycle && (
             <>
               <Card
-                title={selectedCycle.name || `Cycle ${selectedCycle.cycle_number}`}
+                title={
+                  selectedCycle.name ||
+                  `Cycle ${selectedCycle.cycle_number}`
+                }
                 description="Current cycle information and management actions."
               >
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -410,26 +490,30 @@ export default function CycleManagement({ groupId, group, isAdmin }) {
                 <LoadingState />
               ) : (
                 <>
-                  <CycleDraw
-                    groupId={groupId}
-                    cycleId={cycleId}
-                    drawData={draw}
-                    orderData={order}
-                    isAdmin={isAdmin}
-                    isDraft={isDraft}
-                  />
+                  {/* Draw and position swaps side by side on large screens. */}
+                  <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-2">
+                    <CycleDraw
+                      groupId={groupId}
+                      cycleId={cycleId}
+                      drawData={draw}
+                      orderData={order}
+                      isAdmin={isAdmin}
+                      isDraft={isDraft}
+                    />
 
-                  <PositionSwaps
-                    groupId={groupId}
-                    cycleId={cycleId}
-                    swaps={swaps}
-                    orderData={order}
-                    isLoading={swapsLoading}
-                    isAdmin={isAdmin}
-                    isDraft={isDraft}
-                    onRefresh={refetchSwaps}
-                  />
+                    <PositionSwaps
+                      groupId={groupId}
+                      cycleId={cycleId}
+                      swaps={swaps}
+                      orderData={order}
+                      isLoading={swapsLoading}
+                      isAdmin={isAdmin}
+                      isDraft={isDraft}
+                      onRefresh={refetchSwaps}
+                    />
+                  </div>
 
+                  {/* Payout order remains full width. */}
                   <PayoutOrder
                     orderData={order}
                     isAdmin={isAdmin}
@@ -499,6 +583,7 @@ export default function CycleManagement({ groupId, group, isAdmin }) {
                   )}
 
                   <CycleRounds
+                    cycleId={selectedCycle?.id}
                     rounds={rounds}
                     isLoading={roundsLoading}
                     isAdmin={isAdmin}
