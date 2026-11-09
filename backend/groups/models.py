@@ -319,6 +319,7 @@ class Round(models.Model):
 
 
 
+
 class Contribution(models.Model):
 
     class Status(models.TextChoices):
@@ -333,11 +334,15 @@ class Contribution(models.Model):
     member = models.ForeignKey(GroupMembership, on_delete=models.PROTECT, related_name="contributions")
     amount_due = models.DecimalField(max_digits=12, decimal_places=2)
     amount_paid = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    amount_waived = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    waiver_reason = models.TextField(blank=True)
+    waived_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="waived_contributions")
+    waived_at = models.DateTimeField(null=True, blank=True)
     due_date = models.DateField()
     status = models.CharField(max_length=30, choices=Status.choices, default=Status.PENDING)
     paid_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)    
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         constraints = [
@@ -348,28 +353,20 @@ class Contribution(models.Model):
         ]
 
         indexes = [
-            models.Index(
-                fields=["round", "status"],
-                name="contrib_round_status_idx"
-            ),
-            models.Index(
-                fields=["member", "status"],
-                name="contrib_member_status_idx"
-            ),
-            models.Index(
-                fields=["status", "due_date"],
-                name="contrib_status_due_idx"
-            ),
+            models.Index(fields=["round", "status"], name="contrib_round_status_idx"),
+            models.Index(fields=["member", "status"], name="contrib_member_status_idx"),
+            models.Index(fields=["status", "due_date"], name="contrib_status_due_idx"),
         ]
 
         ordering = ["due_date", "id"]
 
     @property
     def balance(self):
-        return self.amount_due - self.amount_paid
+        return self.amount_due - self.amount_paid - self.amount_waived
 
     def __str__(self):
         return f"{self.member} - {self.round} - {self.amount_due}"
+
 
 
 class Transaction(models.Model):
@@ -446,3 +443,41 @@ class Payout(models.Model):
 
     def __str__(self):
         return f"Payout for {self.round} - {self.amount} - {self.status}"
+
+
+
+
+class RoundDateChange(models.Model):
+    round = models.ForeignKey(
+        Round,
+        on_delete=models.PROTECT,
+        related_name="date_changes",
+    )
+
+    previous_start_date = models.DateField()
+    previous_due_date = models.DateField()
+
+    new_start_date = models.DateField()
+    new_due_date = models.DateField()
+
+    reason = models.TextField()
+
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="round_date_changes",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["round", "created_at"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"Round {self.round.round_number} date change "
+            f"for {self.round.cycle.name}"
+        )

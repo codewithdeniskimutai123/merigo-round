@@ -1,3 +1,4 @@
+
 import logging
 
 import json
@@ -11,7 +12,9 @@ from .phone import normalize_phone_number
 from ..models import Transaction
 from .result_codes import get_transaction_status
 from ..services import process_successful_payment
+
 logger = logging.getLogger(__name__)
+
 
 @csrf_exempt
 def mpesa_callback(request):
@@ -23,10 +26,9 @@ def mpesa_callback(request):
 
     if request.content_type != "application/json":
         return JsonResponse(
-                {"error": "Content-Type must be application/json."},
-                status=415,
-     
-    )
+            {"error": "Content-Type must be application/json."},
+            status=415,
+        )
 
     try:
         data = json.loads(request.body)
@@ -36,7 +38,6 @@ def mpesa_callback(request):
             status=400,
         )
 
-
     stk_callback = data.get("Body", {}).get("stkCallback", {})
 
     if not isinstance(stk_callback, dict) or not stk_callback:
@@ -44,7 +45,7 @@ def mpesa_callback(request):
             {"error": "Invalid M-Pesa callback structure."},
             status=400,
         )
-    
+
     logger.info(
         "M-Pesa callback received: %s",
         json.dumps(data),
@@ -53,18 +54,20 @@ def mpesa_callback(request):
     checkout_request_id = stk_callback.get("CheckoutRequestID")
     result_code = stk_callback.get("ResultCode")
     result_desc = stk_callback.get("ResultDesc")
+
     logger.info(
-    "M-Pesa callback details: CheckoutRequestID=%s, ResultCode=%s, ResultDesc=%s",
-    checkout_request_id,
-    result_code,
-    result_desc,
-)
+        "M-Pesa callback details: CheckoutRequestID=%s, ResultCode=%s, ResultDesc=%s",
+        checkout_request_id,
+        result_code,
+        result_desc,
+    )
 
     if not checkout_request_id:
         return JsonResponse(
             {"error": "CheckoutRequestID is missing."},
             status=400,
         )
+
     if result_code is None:
         return JsonResponse(
             {"error": "ResultCode is missing."},
@@ -87,12 +90,11 @@ def mpesa_callback(request):
             )
 
             logger.info(
-                    "M-Pesa transaction found: id=%s, checkout_request_id=%s, status=%s",
-                    payment.id,
-                    checkout_request_id,
-                    payment.status,
-                )
-
+                "M-Pesa transaction found: id=%s, checkout_request_id=%s, status=%s",
+                payment.id,
+                checkout_request_id,
+                payment.status,
+            )
 
             if payment.status == Transaction.Status.SUCCESS:
                 return JsonResponse({
@@ -148,6 +150,7 @@ def mpesa_callback(request):
                     {"error": "Payment amount is missing."},
                     status=400,
                 )
+
             try:
                 amount = Decimal(str(amount))
             except (TypeError, ValueError):
@@ -175,6 +178,7 @@ def mpesa_callback(request):
                     {"error": "Payment amount does not match transaction amount."},
                     status=400,
                 )
+
             if not receipt_number:
                 return JsonResponse(
                     {"error": "M-Pesa receipt number is missing."},
@@ -186,12 +190,13 @@ def mpesa_callback(request):
                     {"error": "Invalid M-Pesa receipt number."},
                     status=400,
                 )
+
             existing_payment = (
-                        Transaction.objects
-                        .filter(mpesa_receipt_number=receipt_number)
-                        .exclude(id=payment.id)
-                        .first()
-                    )
+                Transaction.objects
+                .filter(mpesa_receipt_number=receipt_number)
+                .exclude(id=payment.id)
+                .first()
+            )
 
             if existing_payment:
                 logger.warning(
@@ -202,10 +207,10 @@ def mpesa_callback(request):
                     payment.id,
                 )
 
-                return JsonResponse({
-                    "ResultCode": 0,
-                    "ResultDesc": "Callback already processed.",
-                })
+                return JsonResponse(
+                    {"error": "M-Pesa receipt has already been used."},
+                    status=400,
+                )
 
             payment.mpesa_receipt_number = receipt_number
 
@@ -235,10 +240,6 @@ def mpesa_callback(request):
                         status=400,
                     )
 
-                payment.transaction_date = timezone.make_aware(
-                    parsed_date
-                )
-
             payment.save(
                 update_fields=[
                     "mpesa_receipt_number",
@@ -248,11 +249,11 @@ def mpesa_callback(request):
                 ]
             )
 
-            
             process_successful_payment(
                 transaction_id=payment.id,
                 amount=amount,
             )
+
             logger.info(
                 "M-Pesa payment processed successfully: transaction_id=%s, amount=%s, receipt=%s",
                 payment.id,
@@ -266,7 +267,11 @@ def mpesa_callback(request):
             checkout_request_id,
         )
 
-        
+        return JsonResponse(
+            {"error": "Transaction not found."},
+            status=404,
+        )
+
     except ValueError as exc:
         return JsonResponse(
             {"error": str(exc)},

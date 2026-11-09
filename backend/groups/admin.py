@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Group, GroupMembership, Cycle
+from .models import Group, GroupMembership, Cycle, Round
 
 
 @admin.register(Group)
@@ -39,3 +39,18 @@ class CycleAdmin(admin.ModelAdmin):
         "status",
         "order_status",
     )
+
+@admin.register(Round)
+class RoundAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "cycle",
+        "round_number",
+        "recipient",
+        "start_date",
+        "due_date",
+        "status",
+        "expected_payout_amount",
+    )
+
+   
