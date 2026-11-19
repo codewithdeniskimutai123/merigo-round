@@ -77,3 +77,13 @@ export async function getMyGroupMembershipHistory(groupId) {
   const response = await api.get(`/api/groups/${groupId}/my-membership-history/`)
   return response.data
 }
+
+
+export async function getGroupActivity(groupId, params = {}) {
+  const response = await api.get(
+    `/api/groups/${groupId}/activity/`,
+    { params },
+  )
+
+  return response.data
+}
