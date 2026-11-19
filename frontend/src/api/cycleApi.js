@@ -174,3 +174,50 @@ export async function getRoundDateHistory(cycleId, roundId) {
   )
   return response.data
 }
+
+
+
+// ==================================================
+// CYCLE PAYOUTS
+// ==================================================
+
+export async function getCyclePayouts(groupId, cycleId) {
+  const response = await api.get(
+    `/api/groups/${groupId}/cycles/${cycleId}/payouts/`
+  )
+  return response.data
+}
+
+export async function getCyclePayout(groupId, cycleId, payoutId) {
+  const response = await api.get(
+    `/api/groups/${groupId}/cycles/${cycleId}/payouts/${payoutId}/`
+  )
+  return response.data
+}
+
+export async function createCyclePayout(
+  groupId,
+  cycleId,
+  roundId,
+  payoutData
+) {
+  const response = await api.post(
+    `/api/groups/${groupId}/cycles/${cycleId}/rounds/${roundId}/payouts/`,
+    payoutData
+  )
+  return response.data
+}
+
+export async function initiateCyclePayout(groupId, cycleId, payoutId) {
+  const response = await api.post(
+    `/api/groups/${groupId}/cycles/${cycleId}/payouts/${payoutId}/initiate/`
+  )
+  return response.data
+}
+
+export async function reconcileCyclePayout(groupId, cycleId, payoutId) {
+  const response = await api.post(
+    `/api/groups/${groupId}/cycles/${cycleId}/payouts/${payoutId}/reconcile/`
+  )
+  return response.data
+}
