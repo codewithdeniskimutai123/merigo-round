@@ -27,7 +27,9 @@ from groups.models import (Group,
                         RoundDateChange,
                         MembershipStatusHistory,
                         Contribution,
-                        Transaction,)
+                        Transaction,
+                        Payout,
+                        GroupActivity,)
 from groups.group_services import (
     create_group,
     add_member,
@@ -54,7 +56,13 @@ from groups.group_services import (
     cancel_member_leave_request,
     approve_member_leave,
     deny_member_leave,
-    remove_member_from_cycle)
+    remove_member_from_cycle,
+    create_payout)
+
+from groups.payout_services import (
+    submit_payout,
+    reconcile_payout,
+)
 
 from groups.services import initiate_contribution_payment, waive_contribution
 
@@ -72,6 +80,9 @@ from .serializers import (GroupSerializer,
                           ContributionPaymentInitiationSerializer,
                           TransactionSerializer,
                           ContributionWaiverSerializer,
+                           PayoutSerializer,
+                           PayoutCreateSerializer,
+                           GroupActivitySerializer,
                           )
 
 
@@ -148,6 +159,98 @@ def group_detail(request, pk):
 
     return Response(
         serializer.data,
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def group_activity_list(request, pk):
+    group = get_object_or_404(
+        Group,
+        pk=pk,
+    )
+
+    is_member = GroupMembership.objects.filter(
+        group=group,
+        user=request.user,
+        status__in=[
+            GroupMembership.Status.ACTIVE,
+            GroupMembership.Status.LEAVE_REQUESTED,
+        ],
+    ).exists()
+
+    if not is_member:
+        return Response(
+            {"detail": "Only group members can view group activity."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    activities = GroupActivity.objects.filter(
+        group=group,
+    ).select_related(
+        "actor",
+    ).order_by(
+        "-created_at",
+        "-id",
+    )
+
+    category = request.query_params.get("category")
+
+    valid_categories = dict(GroupActivity.Category.choices)
+
+    if category and category.lower() != "all":
+        category = category.upper()
+
+        if category not in valid_categories:
+            return Response(
+                {
+                    "detail": "Invalid activity category.",
+                    "valid_categories": list(valid_categories.keys()),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        activities = activities.filter(category=category)
+
+    try:
+        limit = int(request.query_params.get("limit", 20))
+        offset = int(request.query_params.get("offset", 0))
+
+        if limit < 1 or limit > 100 or offset < 0:
+            raise ValueError
+
+    except (TypeError, ValueError):
+        return Response(
+            {
+                "detail": "Limit must be between 1 and 100, and offset cannot be negative."
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    total = activities.count()
+
+    results = activities[offset:offset + limit]
+
+    serializer = GroupActivitySerializer(
+        results,
+        many=True,
+    )
+
+    next_offset = (
+        offset + limit
+        if offset + limit < total
+        else None
+    )
+
+    return Response(
+        {
+            "group_id": group.id,
+            "group_name": group.name,
+            "total": total,
+            "next_offset": next_offset,
+            "results": serializer.data,
+        },
         status=status.HTTP_200_OK,
     )
 
@@ -328,7 +431,10 @@ def group_approve_member(request, pk, membership_id):
     )
 
     try:
-        membership = activate_member(membership=membership)
+        membership = activate_member(
+            membership=membership,
+            admin=request.user
+            )
     except ValueError as error:
         return Response(
             {"detail": str(error)},
@@ -2156,3 +2262,293 @@ def cycle_payment_history_download(request, pk, cycle_id):
         ])
 
     return response
+
+
+
+def _is_group_payout_manager(*, group, user):
+    return GroupMembership.objects.filter(
+        group=group,
+        user=user,
+        role__in=[
+            GroupMembership.Role.ADMIN,
+            GroupMembership.Role.TREASURER,
+        ],
+        status=GroupMembership.Status.ACTIVE,
+    ).exists()
+
+
+def _can_view_cycle_payouts(*, cycle, user):
+    is_manager = _is_group_payout_manager(
+        group=cycle.group,
+        user=user,
+    )
+
+    is_cycle_member = CycleMembership.objects.filter(
+        cycle=cycle,
+        membership__user=user,
+        membership__status=GroupMembership.Status.ACTIVE,
+    ).exists()
+
+    return is_manager or is_cycle_member
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def cycle_payout_list(request, pk, cycle_id):
+    cycle = get_object_or_404(
+        Cycle.objects.select_related("group"),
+        pk=cycle_id,
+        group_id=pk,
+    )
+
+    if not _can_view_cycle_payouts(
+        cycle=cycle,
+        user=request.user,
+    ):
+        return Response(
+            {"detail": "You are not authorized to view these payouts."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    payouts = Payout.objects.filter(
+        round__cycle=cycle,
+    ).select_related(
+        "round__cycle",
+        "recipient__user",
+    ).order_by(
+        "-requested_at",
+    )
+
+    serializer = PayoutSerializer(
+        payouts,
+        many=True,
+    )
+
+    return Response(
+        {
+            "group_name": cycle.group.name,
+            "cycle_id": cycle.id,
+            "total_payouts": payouts.count(),
+            "payouts": serializer.data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def cycle_payout_detail(request, pk, cycle_id, payout_id):
+    cycle = get_object_or_404(
+        Cycle.objects.select_related("group"),
+        pk=cycle_id,
+        group_id=pk,
+    )
+
+    if not _can_view_cycle_payouts(
+        cycle=cycle,
+        user=request.user,
+    ):
+        return Response(
+            {"detail": "You are not authorized to view this payout."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    payout = get_object_or_404(
+        Payout.objects.select_related(
+            "round__cycle",
+            "recipient__user",
+        ),
+        pk=payout_id,
+        round__cycle=cycle,
+    )
+
+    return Response(
+        PayoutSerializer(payout).data,
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def cycle_payout_create(request, pk, cycle_id, round_id):
+    cycle = get_object_or_404(
+        Cycle.objects.select_related("group"),
+        pk=cycle_id,
+        group_id=pk,
+    )
+
+    if not _is_group_payout_manager(
+        group=cycle.group,
+        user=request.user,
+    ):
+        return Response(
+            {
+                "detail": (
+                    "Only active group administrators and treasurers "
+                    "can create payouts."
+                )
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    round_obj = get_object_or_404(
+        Round,
+        pk=round_id,
+        cycle=cycle,
+    )
+
+    serializer = PayoutCreateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    try:
+        payout = create_payout(
+            round_obj=round_obj,
+            phone_number=serializer.validated_data["phone_number"],
+        )
+
+    except ValueError as exc:
+        return Response(
+            {"detail": str(exc)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    payout = Payout.objects.select_related(
+        "round__cycle",
+        "recipient__user",
+    ).get(pk=payout.pk)
+
+    return Response(
+        {
+            "detail": "Payout record created successfully.",
+            "payout": PayoutSerializer(payout).data,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def cycle_payout_initiate(request, pk, cycle_id, payout_id):
+    cycle = get_object_or_404(
+        Cycle.objects.select_related("group"),
+        pk=cycle_id,
+        group_id=pk,
+    )
+
+    if not _is_group_payout_manager(
+        group=cycle.group,
+        user=request.user,
+    ):
+        return Response(
+            {
+                "detail": (
+                    "Only active group administrators and treasurers "
+                    "can initiate payouts."
+                )
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    payout = get_object_or_404(
+        Payout,
+        pk=payout_id,
+        round__cycle=cycle,
+    )
+
+    try:
+        daraja_response = submit_payout(
+            payout_id=payout.id,
+        )
+
+    except ValueError as exc:
+        return Response(
+            {"detail": str(exc)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    except RuntimeError as exc:
+        payout.refresh_from_db()
+
+        return Response(
+            {
+                "detail": str(exc),
+                "payout": PayoutSerializer(payout).data,
+            },
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    payout.refresh_from_db()
+
+    return Response(
+        {
+            "detail": "B2C payout request submitted successfully.",
+            "response_code": daraja_response.get("ResponseCode"),
+            "payout": PayoutSerializer(payout).data,
+        },
+        status=status.HTTP_202_ACCEPTED,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def cycle_payout_reconcile(request, pk, cycle_id, payout_id):
+    cycle = get_object_or_404(
+        Cycle.objects.select_related("group"),
+        pk=cycle_id,
+        group_id=pk,
+    )
+
+    if not _is_group_payout_manager(
+        group=cycle.group,
+        user=request.user,
+    ):
+        return Response(
+            {
+                "detail": (
+                    "Only active group administrators and treasurers "
+                    "can reconcile payouts."
+                )
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    payout = get_object_or_404(
+        Payout,
+        pk=payout_id,
+        round__cycle=cycle,
+    )
+
+    try:
+        reconcile_payout(
+            payout_id=payout.id,
+        )
+
+    except ValueError as exc:
+        return Response(
+            {"detail": str(exc)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    except RuntimeError as exc:
+        payout.refresh_from_db()
+
+        return Response(
+            {
+                "detail": str(exc),
+                "payout": PayoutSerializer(payout).data,
+            },
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    payout.refresh_from_db()
+
+    return Response(
+        {
+            "detail": (
+                "Transaction status query submitted. "
+                "The payout status will update when Daraja sends its callback."
+            ),
+            "payout": PayoutSerializer(payout).data,
+        },
+        status=status.HTTP_202_ACCEPTED,
+    )
