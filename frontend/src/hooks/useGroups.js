@@ -1,3 +1,4 @@
+
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
@@ -14,6 +15,7 @@ import {
   approveGroupMember,
   rejectGroupMember,
   getMyGroupMembershipHistory,
+  getGroupActivity,
 } from '../api/groupApi'
 
 function getErrorMessage(error, fallback) {
@@ -211,6 +213,10 @@ export function useApproveGroupMember(groupId) {
         queryKey: ['groups'],
       })
 
+      queryClient.invalidateQueries({
+        queryKey: ['group', groupId, 'activity'],
+      })
+
       toast.success('Member approved successfully.')
     },
 
@@ -239,7 +245,15 @@ export function useRejectGroupMember(groupId) {
       })
 
       queryClient.invalidateQueries({
+        queryKey: ['group', groupId, 'members'],
+      })
+
+      queryClient.invalidateQueries({
         queryKey: ['groups'],
+      })
+
+      queryClient.invalidateQueries({
+        queryKey: ['group', groupId, 'activity'],
       })
 
       toast.success('Membership request rejected successfully.')
@@ -258,5 +272,13 @@ export function useMyGroupMembershipHistory(groupId) {
     queryKey: ['group', groupId, 'my-membership-history'],
     queryFn: () => getMyGroupMembershipHistory(groupId),
     enabled: !!groupId,
+  })
+}
+
+export function useGroupActivity(groupId, params = {}, enabled = true) {
+  return useQuery({
+    queryKey: ['group', groupId, 'activity', params],
+    queryFn: () => getGroupActivity(groupId, params),
+    enabled: Boolean(groupId) && enabled,
   })
 }
