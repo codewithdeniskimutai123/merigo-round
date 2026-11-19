@@ -44,6 +44,12 @@ from .views import (
     cycle_payment_history,
     cycle_payment_history_download,
     contribution_waive,
+    cycle_payout_list,
+    cycle_payout_detail,
+    cycle_payout_create,
+    cycle_payout_initiate,
+    cycle_payout_reconcile,
+    group_activity_list,
 )
 
 urlpatterns = [
@@ -54,6 +60,7 @@ urlpatterns = [
     path("groups/<int:pk>/update/", group_update, name="group-update"),
     path("groups/<int:pk>/delete/", group_delete, name="group-delete"),
     path("groups/<int:group_id>/archive/", group_archive, name="group-archive"),
+    path("groups/<int:pk>/activity/", group_activity_list, name="group-activity-list"),
 
     # Group membership
     path("groups/<int:pk>/join/", group_join_request, name="group-join-request"),
@@ -108,4 +115,11 @@ urlpatterns = [
     path("groups/<int:pk>/cycles/<int:cycle_id>/payments/", cycle_payment_history, name="cycle-payment-history"),
     path("groups/<int:pk>/cycles/<int:cycle_id>/payments/download/", cycle_payment_history_download, name="cycle-payment-history-download"),
     path("groups/<int:pk>/cycles/<int:cycle_id>/contributions/<int:contribution_id>/waive/", contribution_waive, name="contribution-waive"),
+
+    #payouts
+    path("groups/<int:pk>/cycles/<int:cycle_id>/payouts/", cycle_payout_list, name="cycle-payout-list"),
+    path("groups/<int:pk>/cycles/<int:cycle_id>/payouts/<int:payout_id>/", cycle_payout_detail, name="cycle-payout-detail"),
+    path("groups/<int:pk>/cycles/<int:cycle_id>/rounds/<int:round_id>/payouts/", cycle_payout_create, name="cycle-payout-create"),
+    path("groups/<int:pk>/cycles/<int:cycle_id>/payouts/<int:payout_id>/initiate/", cycle_payout_initiate, name="cycle-payout-initiate"),
+    path("groups/<int:pk>/cycles/<int:cycle_id>/payouts/<int:payout_id>/reconcile/", cycle_payout_reconcile, name="cycle-payout-reconcile"),
 ]
