@@ -20,6 +20,9 @@ from .models import (
     RoundDateChange,
 )
 
+from .services import log_group_activity
+
+
 # ============================================================
 # SHARED HELPERS
 # ============================================================
@@ -121,6 +124,15 @@ def create_group(
         joined_at=timezone.now(),
     )
 
+    log_group_activity(
+        group=group,
+        actor=user,
+        category="GROUP",
+        action="GROUP_CREATED",
+        description=f"{user.username} created the group.",
+        metadata={"group_id": group.id},
+    )
+
     return group
 
 
@@ -156,6 +168,15 @@ def archive_group(*, user, group):
     group.status = Group.Status.ARCHIVED
     group.save(
         update_fields=["status", "updated_at"]
+    )
+
+    log_group_activity(
+        group=group,
+        actor=user,
+        category="GROUP",
+        action="GROUP_ARCHIVED",
+        description=f"{user.username} archived the group.",
+        metadata={"group_id": group.id},
     )
 
     return group
@@ -241,20 +262,28 @@ def add_member(*, user, group):
             changed_by=user,
         )
 
-        return membership
+    else:
+        membership = GroupMembership.objects.create(
+            user=user,
+            group=group,
+            role=GroupMembership.Role.MEMBER,
+            status=GroupMembership.Status.PENDING,
+        )
 
-    membership = GroupMembership.objects.create(
-        user=user,
+        record_membership_status_change(
+            membership=membership,
+            previous_status=None,
+            new_status=membership.status,
+            changed_by=user,
+        )
+
+    log_group_activity(
         group=group,
-        role=GroupMembership.Role.MEMBER,
-        status=GroupMembership.Status.PENDING,
-    )
-
-    record_membership_status_change(
-        membership=membership,
-        previous_status=None,
-        new_status=membership.status,
-        changed_by=user,
+        actor=user,
+        category="MEMBERSHIP",
+        action="JOIN_REQUESTED",
+        description=f"{user.username} requested to join the group.",
+        metadata={"membership_id": membership.id},
     )
 
     return membership
@@ -292,13 +321,23 @@ def cancel_join_request(*, user, group):
         reason="Member cancelled their join request.",
     )
 
+    log_group_activity(
+        group=group,
+        actor=user,
+        category="MEMBERSHIP",
+        action="JOIN_REQUEST_CANCELLED",
+        description=f"{user.username} cancelled their join request.",
+        metadata={"membership_id": membership.id},
+    )
+
     return membership
 
 
 @transaction.atomic
 def activate_member(*, membership, admin):
     membership = GroupMembership.objects.select_for_update().select_related(
-        "group"
+        "group",
+        "user",
     ).get(pk=membership.pk)
 
     group = Group.objects.select_for_update().get(
@@ -346,6 +385,15 @@ def activate_member(*, membership, admin):
         reason="Administrator approved the join request.",
     )
 
+    log_group_activity(
+        group=group,
+        actor=admin,
+        category="MEMBERSHIP",
+        action="MEMBER_APPROVED",
+        description=f"{admin.username} approved {membership.user.username} as a group member.",
+        metadata={"membership_id": membership.id},
+    )
+
     return membership
 
 
@@ -354,7 +402,7 @@ def reject_member(*, membership, admin, reason):
     membership = (
         GroupMembership.objects
         .select_for_update()
-        .select_related("group")
+        .select_related("group", "user")
         .get(pk=membership.pk)
     )
 
@@ -389,6 +437,18 @@ def reject_member(*, membership, admin, reason):
         new_status=membership.status,
         changed_by=admin,
         reason=reason.strip(),
+    )
+
+    log_group_activity(
+        group=membership.group,
+        actor=admin,
+        category="MEMBERSHIP",
+        action="JOIN_REQUEST_REJECTED",
+        description=f"{admin.username} rejected {membership.user.username}'s join request.",
+        metadata={
+            "membership_id": membership.id,
+            "reason": reason.strip(),
+        },
     )
 
     return membership
@@ -453,10 +513,22 @@ def update_group(*, user, group, **validated_data):
             "Maximum members must be greater than zero."
         )
 
+    changed_fields = list(validated_data.keys())
+
     for field, value in validated_data.items():
         setattr(group, field, value)
 
     group.save()
+
+    if changed_fields:
+        log_group_activity(
+            group=group,
+            actor=user,
+            category="GROUP",
+            action="GROUP_UPDATED",
+            description=f"{user.username} updated the group details.",
+            metadata={"updated_fields": changed_fields},
+        )
 
     return group
 
@@ -503,6 +575,8 @@ def delete_group(*, user, group):
             "This group cannot be deleted because its original admin membership has changed."
         )
 
+    # Delete the group without creating an activity entry because
+    # the GroupActivity record protects its related group.
     admin_membership.delete()
     group.delete()
 
@@ -590,6 +664,20 @@ def create_cycle(*, group, start_date, swap_deadline):
         for number in range(1, member_count + 1)
     ])
 
+    log_group_activity(
+        group=group,
+        actor=None,
+        category="CYCLE",
+        action="CYCLE_CREATED",
+        description=f"{cycle.name} was created.",
+        metadata={
+            "cycle_id": cycle.id,
+            "cycle_number": cycle.cycle_number,
+            "start_date": cycle.start_date.isoformat(),
+            "swap_deadline": cycle.swap_deadline.isoformat(),
+        },
+    )
+
     return cycle
 
 
@@ -645,9 +733,9 @@ def get_cycle_draw_options(*, cycle, membership):
 
 @transaction.atomic
 def select_cycle_draw_option(*, cycle, membership, token):
-    cycle = Cycle.objects.select_for_update().get(
-        pk=cycle.pk
-    )
+    cycle = Cycle.objects.select_for_update().select_related(
+        "group"
+    ).get(pk=cycle.pk)
 
     if cycle.status != Cycle.Status.DRAFT:
         raise ValueError(
@@ -701,6 +789,20 @@ def select_cycle_draw_option(*, cycle, membership, token):
         update_fields=["selected_by", "selected_at"]
     )
 
+    log_group_activity(
+        group=cycle.group,
+        actor=membership.user,
+        category="DRAW",
+        action="DRAW_NUMBER_SELECTED",
+        description=f"{membership.user.username} selected number {draw_option.number} in {cycle.name}.",
+        metadata={
+            "cycle_id": cycle.id,
+            "membership_id": membership.id,
+            "cycle_membership_id": cycle_membership.id,
+            "selected_number": draw_option.number,
+        },
+    )
+
     member_count = CycleMembership.objects.filter(
         cycle=cycle
     ).count()
@@ -724,8 +826,6 @@ def select_cycle_draw_option(*, cycle, membership, token):
             default=0,
         )
 
-        # Move all existing positions out of the final position range.
-        # This prevents collisions with the unique cycle/position constraint.
         for index, item in enumerate(cycle_memberships, start=1):
             item.position = highest_position + index
 
@@ -756,6 +856,18 @@ def select_cycle_draw_option(*, cycle, membership, token):
         cycle.order_status = Cycle.OrderStatus.OPEN
         cycle.save(
             update_fields=["order_status", "updated_at"]
+        )
+
+        log_group_activity(
+            group=cycle.group,
+            actor=None,
+            category="DRAW",
+            action="DRAW_COMPLETED",
+            description=f"The number draw for {cycle.name} is complete. The cycle order is now open for position swaps.",
+            metadata={
+                "cycle_id": cycle.id,
+                "member_count": member_count,
+            },
         )
 
     remaining_options = CycleDrawOption.objects.filter(
@@ -803,16 +915,16 @@ def generate_cycle_order(*, cycle):
 
 @transaction.atomic
 def request_cycle_swap(*, requester, target):
-    cycle = Cycle.objects.select_for_update().get(
-        pk=requester.cycle_id
-    )
+    cycle = Cycle.objects.select_for_update().select_related(
+        "group"
+    ).get(pk=requester.cycle_id)
 
     requester = CycleMembership.objects.select_for_update().select_related(
-        "membership"
+        "membership__user"
     ).get(pk=requester.pk)
 
     target = CycleMembership.objects.select_for_update().select_related(
-        "membership"
+        "membership__user"
     ).get(pk=target.pk)
 
     if target.cycle_id != cycle.id:
@@ -884,23 +996,40 @@ def request_cycle_swap(*, requester, target):
             "Both members must have assigned positions."
         )
 
-    return CycleSwapRequest.objects.create(
+    swap_request = CycleSwapRequest.objects.create(
         cycle=cycle,
         requester=requester,
         target=target,
         status=CycleSwapRequest.Status.PENDING,
     )
 
+    log_group_activity(
+        group=cycle.group,
+        actor=requester.membership.user,
+        category="SWAP",
+        action="POSITION_SWAP_REQUESTED",
+        description=f"{requester.membership.user.username} requested to swap positions with {target.membership.user.username} in {cycle.name}.",
+        metadata={
+            "cycle_id": cycle.id,
+            "swap_request_id": swap_request.id,
+            "requester_membership_id": requester.membership_id,
+            "target_membership_id": target.membership_id,
+        },
+    )
+
+    return swap_request
+
 
 @transaction.atomic
 def accept_cycle_swap(*, swap_request):
-    cycle = Cycle.objects.select_for_update().get(
-        pk=swap_request.cycle_id
-    )
+    cycle = Cycle.objects.select_for_update().select_related(
+        "group"
+    ).get(pk=swap_request.cycle_id)
 
-    swap_request = CycleSwapRequest.objects.select_for_update().get(
-        pk=swap_request.pk
-    )
+    swap_request = CycleSwapRequest.objects.select_for_update().select_related(
+        "requester__membership__user",
+        "target__membership__user",
+    ).get(pk=swap_request.pk)
 
     if swap_request.status != CycleSwapRequest.Status.PENDING:
         raise ValueError(
@@ -1002,18 +1131,35 @@ def accept_cycle_swap(*, swap_request):
         update_fields=["status", "responded_at"]
     )
 
+    log_group_activity(
+        group=cycle.group,
+        actor=target.membership.user,
+        category="SWAP",
+        action="POSITION_SWAP_ACCEPTED",
+        description=f"{target.membership.user.username} accepted a position swap with {requester.membership.user.username} in {cycle.name}.",
+        metadata={
+            "cycle_id": cycle.id,
+            "swap_request_id": swap_request.id,
+            "requester_membership_id": requester.membership_id,
+            "target_membership_id": target.membership_id,
+            "requester_new_position": requester.position,
+            "target_new_position": target.position,
+        },
+    )
+
     return swap_request
 
 
 @transaction.atomic
 def reject_cycle_swap(*, swap_request):
-    cycle = Cycle.objects.select_for_update().get(
-        pk=swap_request.cycle_id
-    )
+    cycle = Cycle.objects.select_for_update().select_related(
+        "group"
+    ).get(pk=swap_request.cycle_id)
 
-    swap_request = CycleSwapRequest.objects.select_for_update().get(
-        pk=swap_request.pk
-    )
+    swap_request = CycleSwapRequest.objects.select_for_update().select_related(
+        "requester__membership__user",
+        "target__membership__user",
+    ).get(pk=swap_request.pk)
 
     if swap_request.status != CycleSwapRequest.Status.PENDING:
         raise ValueError(
@@ -1047,14 +1193,28 @@ def reject_cycle_swap(*, swap_request):
         update_fields=["status", "responded_at"]
     )
 
+    log_group_activity(
+        group=cycle.group,
+        actor=swap_request.target.membership.user,
+        category="SWAP",
+        action="POSITION_SWAP_REJECTED",
+        description=f"{swap_request.target.membership.user.username} rejected a position swap request from {swap_request.requester.membership.user.username} in {cycle.name}.",
+        metadata={
+            "cycle_id": cycle.id,
+            "swap_request_id": swap_request.id,
+            "requester_membership_id": swap_request.requester.membership_id,
+            "target_membership_id": swap_request.target.membership_id,
+        },
+    )
+
     return swap_request
 
 
 @transaction.atomic
 def finalize_cycle_order(*, cycle):
-    cycle = Cycle.objects.select_for_update().get(
-        pk=cycle.pk
-    )
+    cycle = Cycle.objects.select_for_update().select_related(
+        "group"
+    ).get(pk=cycle.pk)
 
     if cycle.order_status != Cycle.OrderStatus.OPEN:
         raise ValueError(
@@ -1117,6 +1277,18 @@ def finalize_cycle_order(*, cycle):
     cycle.order_status = Cycle.OrderStatus.LOCKED
     cycle.save(
         update_fields=["order_status", "updated_at"]
+    )
+
+    log_group_activity(
+        group=cycle.group,
+        actor=None,
+        category="CYCLE",
+        action="CYCLE_ORDER_FINALIZED",
+        description=f"The final member order for {cycle.name} has been locked.",
+        metadata={
+            "cycle_id": cycle.id,
+            "member_count": len(cycle_memberships),
+        },
     )
 
     return cycle
@@ -1276,6 +1448,18 @@ def create_cycle_rounds(*, cycle):
         update_fields=["end_date", "updated_at"]
     )
 
+    log_group_activity(
+        group=cycle.group,
+        actor=None,
+        category="ROUND",
+        action="CYCLE_ROUNDS_CREATED",
+        description=f"{len(rounds)} rounds were created for {cycle.name}.",
+        metadata={
+            "cycle_id": cycle.id,
+            "round_count": len(rounds),
+        },
+    )
+
     return cycle.rounds.order_by("round_number")
 
 
@@ -1331,10 +1515,25 @@ def update_cycle(*, cycle, **validated_data):
             swap_deadline=new_swap_deadline,
         )
 
+    changed_fields = list(validated_data.keys())
+
     for field, value in validated_data.items():
         setattr(locked_cycle, field, value)
 
     locked_cycle.save()
+
+    if changed_fields:
+        log_group_activity(
+            group=locked_cycle.group,
+            actor=None,
+            category="CYCLE",
+            action="CYCLE_UPDATED",
+            description=f"{locked_cycle.name} was updated.",
+            metadata={
+                "cycle_id": locked_cycle.id,
+                "updated_fields": changed_fields,
+            },
+        )
 
     return locked_cycle
 
@@ -1345,9 +1544,9 @@ def update_cycle(*, cycle, **validated_data):
 
 @transaction.atomic
 def activate_cycle(*, cycle):
-    cycle = Cycle.objects.select_for_update().get(
-        pk=cycle.pk
-    )
+    cycle = Cycle.objects.select_for_update().select_related(
+        "group"
+    ).get(pk=cycle.pk)
 
     today = timezone.localdate()
 
@@ -1431,14 +1630,40 @@ def activate_cycle(*, cycle):
         update_fields=["status", "updated_at"]
     )
 
+    log_group_activity(
+        group=cycle.group,
+        actor=None,
+        category="CYCLE",
+        action="CYCLE_ACTIVATED",
+        description=f"{cycle.name} was activated. Round 1 is now active.",
+        metadata={
+            "cycle_id": cycle.id,
+            "first_round_id": first_round.id,
+            "round_number": first_round.round_number,
+        },
+    )
+
+    log_group_activity(
+        group=cycle.group,
+        actor=None,
+        category="ROUND",
+        action="ROUND_ACTIVATED",
+        description=f"Round 1 of {cycle.name} is now active.",
+        metadata={
+            "cycle_id": cycle.id,
+            "round_id": first_round.id,
+            "round_number": first_round.round_number,
+        },
+    )
+
     return cycle
 
 
 @transaction.atomic
 def activate_next_round(*, cycle):
-    cycle = Cycle.objects.select_for_update().get(
-        pk=cycle.pk
-    )
+    cycle = Cycle.objects.select_for_update().select_related(
+        "group"
+    ).get(pk=cycle.pk)
 
     today = timezone.localdate()
 
@@ -1504,6 +1729,18 @@ def activate_next_round(*, cycle):
             update_fields=["status", "updated_at"]
         )
 
+        log_group_activity(
+            group=cycle.group,
+            actor=None,
+            category="CYCLE",
+            action="CYCLE_COMPLETED",
+            description=f"{cycle.name} has been completed.",
+            metadata={
+                "cycle_id": cycle.id,
+                "round_count": len(rounds),
+            },
+        )
+
         return None
 
     previous_round = next(
@@ -1548,6 +1785,19 @@ def activate_next_round(*, cycle):
     next_round.status = Round.Status.ACTIVE
     next_round.save(
         update_fields=["status", "updated_at"]
+    )
+
+    log_group_activity(
+        group=cycle.group,
+        actor=None,
+        category="ROUND",
+        action="ROUND_ACTIVATED",
+        description=f"Round {next_round.round_number} of {cycle.name} is now active.",
+        metadata={
+            "cycle_id": cycle.id,
+            "round_id": next_round.id,
+            "round_number": next_round.round_number,
+        },
     )
 
     return next_round
@@ -1645,13 +1895,12 @@ def update_round_payment_status(*, round_obj):
 
 # ============================================================
 # PAYOUT SERVICES
-# Existing payment/payout workflow retained.
 # ============================================================
 
 @transaction.atomic
 def create_payout(*, round_obj, phone_number):
     round_obj = Round.objects.select_for_update().select_related(
-        "cycle",
+        "cycle__group",
         "recipient",
     ).get(pk=round_obj.pk)
 
@@ -1698,11 +1947,9 @@ def create_payout(*, round_obj, phone_number):
     outstanding = [
         item
         for item in contributions
-        if item.status not in [
-            Contribution.Status.PAID,
-            Contribution.Status.WAIVED,
-        ]
-        or item.amount_paid < item.amount_due
+        if (
+            item.amount_paid + item.amount_waived
+        ) < item.amount_due
     ]
 
     if outstanding:
@@ -1715,7 +1962,7 @@ def create_payout(*, round_obj, phone_number):
             "The expected payout amount must be greater than zero."
         )
 
-    return Payout.objects.create(
+    payout = Payout.objects.create(
         round=round_obj,
         recipient=round_obj.recipient,
         amount=round_obj.expected_payout_amount,
@@ -1723,12 +1970,31 @@ def create_payout(*, round_obj, phone_number):
         status=Payout.Status.PENDING,
     )
 
+    log_group_activity(
+        group=round_obj.cycle.group,
+        actor=None,
+        category="PAYOUT",
+        action="PAYOUT_CREATED",
+        description=f"A payout of {payout.amount} was created for round {round_obj.round_number}.",
+        metadata={
+            "cycle_id": round_obj.cycle_id,
+            "round_id": round_obj.id,
+            "round_number": round_obj.round_number,
+            "payout_id": payout.id,
+            "recipient_id": payout.recipient_id,
+            "amount": str(payout.amount),
+            "phone_number": payout.phone_number,
+        },
+    )
+
+    return payout
+
 
 @transaction.atomic
 def confirm_payout_success(*, payout, transaction_reference):
-    payout = Payout.objects.select_for_update().get(
-        pk=payout.pk
-    )
+    payout = Payout.objects.select_for_update().select_related(
+        "round__cycle__group"
+    ).get(pk=payout.pk)
 
     if payout.status == Payout.Status.SUCCESS:
         if payout.transaction_reference == transaction_reference:
@@ -1789,6 +2055,35 @@ def confirm_payout_success(*, payout, transaction_reference):
         update_fields=["status", "updated_at"]
     )
 
+    log_group_activity(
+        group=cycle.group,
+        actor=None,
+        category="PAYOUT",
+        action="PAYOUT_SUCCESSFUL",
+        description=f"The payout for round {round_obj.round_number} was successfully completed.",
+        metadata={
+            "cycle_id": cycle.id,
+            "round_id": round_obj.id,
+            "round_number": round_obj.round_number,
+            "payout_id": payout.id,
+            "amount": str(payout.amount),
+            "transaction_reference": transaction_reference,
+        },
+    )
+
+    log_group_activity(
+        group=cycle.group,
+        actor=None,
+        category="ROUND",
+        action="ROUND_COMPLETED",
+        description=f"Round {round_obj.round_number} of {cycle.name} has been completed.",
+        metadata={
+            "cycle_id": cycle.id,
+            "round_id": round_obj.id,
+            "round_number": round_obj.round_number,
+        },
+    )
+
     total_rounds = Round.objects.filter(
         cycle=cycle
     ).count()
@@ -1813,14 +2108,26 @@ def confirm_payout_success(*, payout, transaction_reference):
             update_fields=["status", "updated_at"]
         )
 
+        log_group_activity(
+            group=cycle.group,
+            actor=None,
+            category="CYCLE",
+            action="CYCLE_COMPLETED",
+            description=f"{cycle.name} has been completed.",
+            metadata={
+                "cycle_id": cycle.id,
+                "round_count": total_rounds,
+            },
+        )
+
     return payout
 
 
 @transaction.atomic
 def confirm_payout_failure(*, payout, failure_reason):
-    payout = Payout.objects.select_for_update().get(
-        pk=payout.pk
-    )
+    payout = Payout.objects.select_for_update().select_related(
+        "round__cycle__group"
+    ).get(pk=payout.pk)
 
     if payout.status != Payout.Status.PENDING:
         raise ValueError(
@@ -1841,6 +2148,20 @@ def confirm_payout_failure(*, payout, failure_reason):
             "failure_reason",
             "updated_at",
         ]
+    )
+
+    log_group_activity(
+        group=payout.round.cycle.group,
+        actor=None,
+        category="PAYOUT",
+        action="PAYOUT_FAILED",
+        description=f"The payout for round {payout.round.round_number} failed.",
+        metadata={
+            "cycle_id": payout.round.cycle_id,
+            "round_id": payout.round_id,
+            "payout_id": payout.id,
+            "failure_reason": failure_reason.strip(),
+        },
     )
 
     return payout
@@ -1900,8 +2221,6 @@ def remove_member_from_cycle(*, cycle, membership):
             "A member cannot leave after payout records have been created."
         )
 
-    # CycleDrawOption.selected_by uses PROTECT.
-    # Release the selected draw option before deleting the membership.
     CycleDrawOption.objects.filter(
         selected_by=cycle_membership
     ).update(
@@ -1909,9 +2228,6 @@ def remove_member_from_cycle(*, cycle, membership):
         selected_at=None,
     )
 
-    # CycleSwapRequest requester and target use PROTECT.
-    # These requests belong to an unfinished draft cycle and cannot
-    # remain attached to a member who is being removed from that cycle.
     CycleSwapRequest.objects.filter(
         requester=cycle_membership
     ).delete()
@@ -1933,7 +2249,6 @@ def remove_member_from_cycle(*, cycle, membership):
             "A cycle must have at least two members."
         )
 
-    # First move every remaining position outside the final range.
     highest_position = max(
         (item.position or 0 for item in remaining_memberships),
         default=0,
@@ -1945,17 +2260,28 @@ def remove_member_from_cycle(*, cycle, membership):
             update_fields=["position", "updated_at"]
         )
 
-    # Then assign consecutive positions.
     for position, item in enumerate(remaining_memberships, start=1):
         item.position = position
         item.save(
             update_fields=["position", "updated_at"]
         )
 
-    # No financial records exist, so the draft rounds can be regenerated.
     cycle.rounds.all().delete()
 
     create_cycle_rounds(cycle=cycle)
+
+    log_group_activity(
+        group=cycle.group,
+        actor=None,
+        category="CYCLE",
+        action="CYCLE_MEMBER_REMOVED",
+        description=f"A member was removed from {cycle.name} and the remaining cycle order was updated.",
+        metadata={
+            "cycle_id": cycle.id,
+            "membership_id": membership.id,
+            "remaining_member_count": len(remaining_memberships),
+        },
+    )
 
     return CycleMembership.objects.filter(
         cycle=cycle
@@ -1965,7 +2291,6 @@ def remove_member_from_cycle(*, cycle, membership):
 # ============================================================
 # ROUND DATE EXTENSION
 # ============================================================
-
 
 @transaction.atomic
 def extend_round_due_date(
@@ -1977,7 +2302,7 @@ def extend_round_due_date(
 ):
     round_obj = (
         Round.objects.select_for_update()
-        .select_related("cycle")
+        .select_related("cycle__group")
         .get(pk=round_obj.pk)
     )
 
@@ -2044,7 +2369,6 @@ def extend_round_due_date(
             "The selected round could not be found."
         )
 
-    # Validate every affected round before changing any dates.
     for affected_round in affected_rounds:
         if affected_round.status in [
             Round.Status.COMPLETED,
@@ -2055,8 +2379,6 @@ def extend_round_due_date(
                 "Dates cannot be extended when an affected round has already reached payout or completion."
             )
 
-        # Pending and successful payouts prevent date extensions.
-        # Failed and cancelled payouts do not.
         if Payout.objects.filter(
             round=affected_round,
             status__in=[
@@ -2068,17 +2390,14 @@ def extend_round_due_date(
                 "Dates cannot be extended while an affected round has a pending or successful payout."
             )
 
-    # Update the selected round and all subsequent rounds.
     for affected_round in affected_rounds:
         previous_start_date = affected_round.start_date
         previous_due_date = affected_round.due_date
 
         if affected_round.pk == round_obj.pk:
-            # Keep the selected round's start date unchanged.
             updated_start_date = previous_start_date
             updated_due_date = new_due_date
         else:
-            # Shift subsequent rounds by the same extension period.
             updated_start_date = (
                 previous_start_date + timedelta(days=days_extended)
             )
@@ -2087,7 +2406,6 @@ def extend_round_due_date(
                 previous_due_date + timedelta(days=days_extended)
             )
 
-        # Preserve the history of every affected round.
         RoundDateChange.objects.create(
             round=affected_round,
             previous_start_date=previous_start_date,
@@ -2109,7 +2427,6 @@ def extend_round_due_date(
             ]
         )
 
-        # Keep contribution deadlines synchronized with round deadlines.
         Contribution.objects.filter(
             round=affected_round
         ).update(
@@ -2117,11 +2434,29 @@ def extend_round_due_date(
             updated_at=timezone.now(),
         )
 
-    # Update the cycle's final end date.
     cycle.end_date = affected_rounds[-1].due_date
 
     cycle.save(
         update_fields=["end_date", "updated_at"]
+    )
+
+    log_group_activity(
+        group=cycle.group,
+        actor=changed_by,
+        category="ROUND",
+        action="ROUND_DATES_EXTENDED",
+        description=f"{changed_by.username} extended the due date for round {round_obj.round_number} and adjusted subsequent round dates.",
+        metadata={
+            "cycle_id": cycle.id,
+            "round_id": round_obj.id,
+            "round_number": round_obj.round_number,
+            "new_due_date": new_due_date.isoformat(),
+            "days_extended": days_extended,
+            "reason": reason.strip(),
+            "affected_round_ids": [
+                item.id for item in affected_rounds
+            ],
+        },
     )
 
     return Round.objects.filter(
@@ -2279,9 +2614,10 @@ def can_member_request_leave(*, membership):
 
 @transaction.atomic
 def request_member_leave(*, membership):
-    membership = GroupMembership.objects.select_for_update().get(
-        pk=membership.pk
-    )
+    membership = GroupMembership.objects.select_for_update().select_related(
+        "group",
+        "user",
+    ).get(pk=membership.pk)
 
     if membership.status != GroupMembership.Status.ACTIVE:
         raise ValueError(
@@ -2308,14 +2644,24 @@ def request_member_leave(*, membership):
         changed_by=membership.user,
     )
 
+    log_group_activity(
+        group=membership.group,
+        actor=membership.user,
+        category="MEMBERSHIP",
+        action="LEAVE_REQUESTED",
+        description=f"{membership.user.username} requested to leave the group.",
+        metadata={"membership_id": membership.id},
+    )
+
     return membership
 
 
 @transaction.atomic
 def cancel_member_leave_request(*, membership):
-    membership = GroupMembership.objects.select_for_update().get(
-        pk=membership.pk
-    )
+    membership = GroupMembership.objects.select_for_update().select_related(
+        "group",
+        "user",
+    ).get(pk=membership.pk)
 
     if membership.status != GroupMembership.Status.LEAVE_REQUESTED:
         raise ValueError(
@@ -2337,6 +2683,15 @@ def cancel_member_leave_request(*, membership):
         changed_by=membership.user,
     )
 
+    log_group_activity(
+        group=membership.group,
+        actor=membership.user,
+        category="MEMBERSHIP",
+        action="LEAVE_REQUEST_CANCELLED",
+        description=f"{membership.user.username} cancelled their leave request.",
+        metadata={"membership_id": membership.id},
+    )
+
     return membership
 
 
@@ -2344,7 +2699,7 @@ def cancel_member_leave_request(*, membership):
 def deny_member_leave(*, membership, admin, reason):
     membership = (
         GroupMembership.objects.select_for_update()
-        .select_related("group")
+        .select_related("group", "user")
         .get(pk=membership.pk)
     )
 
@@ -2381,6 +2736,18 @@ def deny_member_leave(*, membership, admin, reason):
         changed_by=admin,
     )
 
+    log_group_activity(
+        group=membership.group,
+        actor=admin,
+        category="MEMBERSHIP",
+        action="LEAVE_REQUEST_REJECTED",
+        description=f"{admin.username} rejected {membership.user.username}'s leave request.",
+        metadata={
+            "membership_id": membership.id,
+            "reason": reason.strip(),
+        },
+    )
+
     return membership
 
 
@@ -2388,7 +2755,7 @@ def deny_member_leave(*, membership, admin, reason):
 def approve_member_leave(*, membership, admin):
     membership = (
         GroupMembership.objects.select_for_update()
-        .select_related("group")
+        .select_related("group", "user")
         .get(pk=membership.pk)
     )
 
@@ -2459,6 +2826,15 @@ def approve_member_leave(*, membership, admin):
         new_status=membership.status,
         reason="Administrator approved the member's leave request.",
         changed_by=admin,
+    )
+
+    log_group_activity(
+        group=membership.group,
+        actor=admin,
+        category="MEMBERSHIP",
+        action="MEMBER_LEFT",
+        description=f"{admin.username} approved {membership.user.username}'s request to leave the group.",
+        metadata={"membership_id": membership.id},
     )
 
     return membership
