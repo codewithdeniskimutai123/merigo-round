@@ -431,6 +431,23 @@ class Payout(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    status_query_originator_id = models.CharField(
+    max_length=100,
+    unique=True,
+    null=True,
+    blank=True,
+    )
+
+    status_query_conversation_id = models.CharField(
+        max_length=100,
+        blank=True,
+    )
+
+    status_query_requested_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
     class Meta:
         constraints = [
             models.UniqueConstraint(
@@ -481,3 +498,57 @@ class RoundDateChange(models.Model):
             f"Round {self.round.round_number} date change "
             f"for {self.round.cycle.name}"
         )
+
+
+
+class GroupActivity(models.Model):
+
+    class Category(models.TextChoices):
+        MEMBERSHIP = "MEMBERSHIP", "Membership"
+        CONTRIBUTION = "CONTRIBUTION", "Contribution"
+        PAYMENT = "PAYMENT", "Payment"
+        CYCLE = "CYCLE", "Cycle"
+        ROUND = "ROUND", "Round"
+        DRAW = "DRAW", "Draw"
+        SWAP = "SWAP", "Position Swap"
+        PAYOUT = "PAYOUT", "Payout"
+        GROUP = "GROUP", "Group Management"
+
+    id = models.BigAutoField(primary_key=True)
+
+    group = models.ForeignKey(
+        Group,
+        on_delete=models.PROTECT,
+        related_name="activities",
+    )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="group_activities",
+    )
+    category = models.CharField(
+        max_length=20,
+        choices=Category.choices,
+    )
+    action = models.CharField(max_length=80)
+    description = models.TextField()
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+        indexes = [
+            models.Index(
+                fields=["group", "-created_at"],
+                name="activity_group_created_idx",
+            ),
+            models.Index(
+                fields=["group", "category", "-created_at"],
+                name="activity_group_cat_date_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.group.name} - {self.action}"
