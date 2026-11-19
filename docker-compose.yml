@@ -1,5 +1,5 @@
-services:
 
+services:
   postgres:
     image: postgres:17
     container_name: merigo_postgres
@@ -19,6 +19,47 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"
+
+  backend:
+    build: ./backend
+    container_name: merigo_backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DB_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+
+  celery_worker:
+    build: ./backend
+    container_name: merigo_celery_worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DB_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    command: celery -A config worker --loglevel=info
+    depends_on:
+      - backend
+
+  celery_beat:
+    build: ./backend
+    container_name: merigo_celery_beat
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DB_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    command: celery -A config beat --loglevel=info
+    depends_on:
+      - backend
 
 volumes:
   postgres_data:
