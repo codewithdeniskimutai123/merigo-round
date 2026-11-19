@@ -3,20 +3,21 @@ from rest_framework import serializers
 from django.utils import timezone
 from decimal import Decimal
 
-
-
 from groups.models import (
     Group,
     GroupMembership,
     MembershipStatusHistory,
+    GroupActivity,
     Cycle,
     Round,
     RoundDateChange,
     Contribution,
     Transaction,
+    Payout,
 )
 
 from groups.mpesa.phone import normalize_phone_number
+
 
 class GroupSerializer(serializers.ModelSerializer):
     user_membership_status = serializers.CharField(
@@ -82,9 +83,9 @@ class GroupMembershipSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source="user.email", read_only=True)
     phone_number = serializers.CharField(source="user.phone_number", read_only=True)
     profile_photo = serializers.ImageField(
-    source='user.profile_photo',
-    read_only=True,
-)
+        source="user.profile_photo",
+        read_only=True,
+    )
 
     class Meta:
         model = GroupMembership
@@ -118,13 +119,48 @@ class MembershipStatusHistorySerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class GroupActivitySerializer(serializers.ModelSerializer):
+    actor_username = serializers.CharField(
+        source="actor.username",
+        read_only=True,
+        allow_null=True,
+    )
+
+    actor_first_name = serializers.CharField(
+        source="actor.first_name",
+        read_only=True,
+        allow_null=True,
+    )
+
+    actor_last_name = serializers.CharField(
+        source="actor.last_name",
+        read_only=True,
+        allow_null=True,
+    )
+
+    class Meta:
+        model = GroupActivity
+        fields = [
+            "id",
+            "group",
+            "actor",
+            "actor_username",
+            "actor_first_name",
+            "actor_last_name",
+            "category",
+            "action",
+            "description",
+            "metadata",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+
 class CycleCreateSerializer(serializers.Serializer):
     start_date = serializers.DateField()
     swap_deadline = serializers.DateTimeField()
 
     def validate_swap_deadline(self, value):
-        from django.utils import timezone
-
         if value <= timezone.now():
             raise serializers.ValidationError(
                 "The swap deadline must be in the future."
@@ -149,6 +185,7 @@ class CycleSerializer(serializers.ModelSerializer):
         ]
 
         read_only_fields = fields
+
 
 class RoundSerializer(serializers.ModelSerializer):
     recipient_details = GroupMembershipSerializer(
@@ -219,6 +256,7 @@ class ContributionSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
+
 class RoundDateExtensionSerializer(serializers.Serializer):
     new_due_date = serializers.DateField()
     reason = serializers.CharField(
@@ -246,7 +284,6 @@ class RoundDateExtensionSerializer(serializers.Serializer):
         return value.strip()
 
 
-
 class RoundDateChangeSerializer(serializers.ModelSerializer):
     changed_by_username = serializers.CharField(
         source="changed_by.username",
@@ -268,7 +305,6 @@ class RoundDateChangeSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = fields
-
 
 
 class CycleUpdateSerializer(serializers.ModelSerializer):
@@ -360,3 +396,45 @@ class ContributionWaiverSerializer(serializers.Serializer):
             )
 
         return value.strip()
+
+
+class PayoutSerializer(serializers.ModelSerializer):
+    recipient_details = GroupMembershipSerializer(
+        source="recipient",
+        read_only=True,
+    )
+
+    round_number = serializers.IntegerField(
+        source="round.round_number",
+        read_only=True,
+    )
+
+    class Meta:
+        model = Payout
+        fields = [
+            "id",
+            "round",
+            "round_number",
+            "recipient",
+            "recipient_details",
+            "amount",
+            "phone_number",
+            "status",
+            "transaction_reference",
+            "failure_reason",
+            "requested_at",
+            "completed_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+
+class PayoutCreateSerializer(serializers.Serializer):
+    phone_number = serializers.CharField(max_length=20)
+
+    def validate_phone_number(self, value):
+        try:
+            return normalize_phone_number(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc))
