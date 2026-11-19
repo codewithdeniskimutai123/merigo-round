@@ -22,6 +22,11 @@ import {
   activateNextRound,
   extendRoundDueDate,
   getRoundDateHistory,
+  getCyclePayouts,
+  getCyclePayout,
+  createCyclePayout,
+  initiateCyclePayout,
+  reconcileCyclePayout,
 } from '../api/cycleApi'
 
 // ==================================================
@@ -87,6 +92,10 @@ function invalidateCycleQueries(queryClient, groupId, cycleId) {
   queryClient.invalidateQueries({
     queryKey: ['cycle', groupId, cycleId, 'round-date-history'],
   })
+
+  queryClient.invalidateQueries({
+    queryKey: ['cycle', groupId, cycleId, 'payouts'],
+  })
 }
 
 // ==================================================
@@ -146,6 +155,30 @@ export function useMyCycleRound(groupId, cycleId, enabled = true) {
     queryKey: ['cycle', groupId, cycleId, 'my-round'],
     queryFn: () => getMyCycleRound(groupId, cycleId),
     enabled: Boolean(groupId) && Boolean(cycleId) && enabled,
+  })
+}
+
+// ==================================================
+// CYCLE PAYOUT QUERIES
+// ==================================================
+
+export function useCyclePayouts(groupId, cycleId, enabled = true) {
+  return useQuery({
+    queryKey: ['cycle', groupId, cycleId, 'payouts'],
+    queryFn: () => getCyclePayouts(groupId, cycleId),
+    enabled: Boolean(groupId) && Boolean(cycleId) && enabled,
+  })
+}
+
+export function useCyclePayout(groupId, cycleId, payoutId, enabled = true) {
+  return useQuery({
+    queryKey: ['cycle', groupId, cycleId, 'payouts', payoutId],
+    queryFn: () => getCyclePayout(groupId, cycleId, payoutId),
+    enabled:
+      Boolean(groupId) &&
+      Boolean(cycleId) &&
+      Boolean(payoutId) &&
+      enabled,
   })
 }
 
@@ -378,6 +411,81 @@ export function useActivateNextRound(groupId, cycleId) {
       toast.error(
         getErrorMessage(error, 'Unable to activate the next round.')
       )
+    },
+  })
+}
+
+// ==================================================
+// CYCLE PAYOUT MUTATIONS
+// ==================================================
+
+export function useCreateCyclePayout(groupId, cycleId) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ roundId, payoutData }) =>
+      createCyclePayout(groupId, cycleId, roundId, payoutData),
+
+    onSuccess: () => {
+      invalidateCycleQueries(queryClient, groupId, cycleId)
+
+      toast.success('Payout record created successfully.')
+    },
+
+    onError: (error) => {
+      toast.error(
+        getErrorMessage(error, 'Unable to create payout record.')
+      )
+    },
+  })
+}
+
+export function useInitiateCyclePayout(groupId, cycleId) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (payoutId) =>
+      initiateCyclePayout(groupId, cycleId, payoutId),
+
+    onSuccess: () => {
+      invalidateCycleQueries(queryClient, groupId, cycleId)
+
+      toast.success('Payout request submitted successfully.')
+    },
+
+    onError: (error) => {
+      toast.error(
+        getErrorMessage(error, 'Unable to initiate payout.')
+      )
+
+      queryClient.invalidateQueries({
+        queryKey: ['cycle', groupId, cycleId, 'payouts'],
+      })
+    },
+  })
+}
+
+export function useReconcileCyclePayout(groupId, cycleId) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (payoutId) =>
+      reconcileCyclePayout(groupId, cycleId, payoutId),
+
+    onSuccess: () => {
+      invalidateCycleQueries(queryClient, groupId, cycleId)
+
+      toast.success('Payout status check submitted successfully.')
+    },
+
+    onError: (error) => {
+      toast.error(
+        getErrorMessage(error, 'Unable to check payout status.')
+      )
+
+      queryClient.invalidateQueries({
+        queryKey: ['cycle', groupId, cycleId, 'payouts'],
+      })
     },
   })
 }
