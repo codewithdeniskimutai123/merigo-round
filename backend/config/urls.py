@@ -1,4 +1,3 @@
-
 from django.contrib import admin
 from django.urls import path, include
 
@@ -7,10 +6,9 @@ from django.conf.urls.static import static
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path("mpesa/", include("groups.mpesa.urls")),
+    path("payments/", include("groups.mpesa.urls")),
     path("api/", include("groups.api.urls")),
     path("api/auth/", include("users.api.urls")),
-
 ]
 
 if settings.DEBUG:
