@@ -2143,6 +2143,17 @@ Merigo Round is more than a group contribution tracker. It is an evolving digita
 
 Development began on September 1, 2026, and has progressed through the implementation of a substantial full-stack application, payment integrations, background processing, and local Docker infrastructure.
 
-The next major milestone is cloud deployment, followed by completing the outstanding integrations and strengthening the platform for reliable real-world use.
+### Deployment Status
+
+Merigo Round is deployed and publicly accessible on Render.
+
+- **Frontend:** https://merigo-round-frontend.onrender.com
+- **Backend API:** Deployed on Render.
+- **Hosting Platform:** Render (Free Plan)
+
+**Note:** The application currently uses Render's free hosting services. Some services may spin down after periods of inactivity. As a result, the first visit or request after inactivity may take longer than usual while the services start up. Please allow a little time for the application to respond.
+
+The application is actively being developed and improved.
+
 
 **Merigo Round — Bringing traditional group savings into a more organized digital experience.**
