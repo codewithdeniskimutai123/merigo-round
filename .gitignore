@@ -27,3 +27,11 @@ backend/venv/
 
 .coverage
 htmlcov/
+
+
+# Celery Beat runtime files
+
+backend/celerybeat-schedule*
+
+# Uploaded media files
+backend/media/
