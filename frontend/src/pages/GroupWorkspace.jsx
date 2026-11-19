@@ -43,17 +43,21 @@ import GroupMembers from './groups/workspace/components/GroupMembers.jsx'
 import ContributionManagement from './groups/workspace/components/ContributionManagement.jsx'
 import ContributionDetail from './groups/workspace/components/ContributionDetail.jsx'
 import PaymentHistory from './groups/workspace/components/PaymentHistory.jsx'
+import GroupActivity from './groups/workspace/components/GroupActivity.jsx'
 
 // Cycle components
 import CycleManagement from './groups/workspace/components/cycles/CycleManagement.jsx'
 
+// Payout components
+import GroupPayouts from './groups/workspace/components/payouts/GroupPayouts.jsx'
+
 const sections = [
   { id: 'overview', label: 'Overview' },
   { id: 'members', label: 'Members' },
+  { id: 'cycles', label: 'Cycles and rounds' },
   { id: 'contributions', label: 'Contributions' },
   { id: 'payments', label: 'Payments' },
   { id: 'payouts', label: 'Payouts' },
-  { id: 'cycles', label: 'Cycles and rounds' },
   { id: 'activity', label: 'Activity' },
 ]
 
@@ -153,6 +157,10 @@ export default function GroupWorkspace() {
 
   const isAdmin =
     membershipStatus === 'ACTIVE' && membershipRole === 'ADMIN'
+
+  const canManagePayouts =
+    membershipStatus === 'ACTIVE' &&
+    ['ADMIN', 'TREASURER'].includes(membershipRole)
 
   const canManageDraftGroup = isAdmin && group?.status === 'DRAFT'
 
@@ -493,6 +501,14 @@ export default function GroupWorkspace() {
         />
       )}
 
+      {isMember && activeSection === 'cycles' && (
+        <CycleManagement
+          groupId={id}
+          group={group}
+          isAdmin={isAdmin}
+        />
+      )}
+
       {isMember && activeSection === 'contributions' && (
         <ContributionManagement
           groupId={id}
@@ -501,14 +517,6 @@ export default function GroupWorkspace() {
           currentUser={currentUser}
           onOpenContribution={handleOpenContribution}
           onViewPaymentHistory={handleViewPaymentHistory}
-        />
-      )}
-
-      {isMember && activeSection === 'cycles' && (
-        <CycleManagement
-          groupId={id}
-          group={group}
-          isAdmin={isAdmin}
         />
       )}
 
@@ -530,28 +538,15 @@ export default function GroupWorkspace() {
         )
       )}
 
-      {isMember &&
-        ['payouts', 'activity'].includes(activeSection) &&
-        currentSection && (
-          <Card
-            title={sectionDescriptions[activeSection].title}
-            description={sectionDescriptions[activeSection].description}
-          >
-            <div className="rounded-xl border border-border bg-surface-secondary p-5">
-              <p className="font-semibold text-text">
-                {isAdmin ? 'Administrator access' : 'Member access'}
-              </p>
+      {isMember && activeSection === 'payouts' && (
+        <GroupPayouts
+          groupId={id}
+          canManagePayouts={canManagePayouts}
+        />
+      )}
 
-              <p className="mt-2 text-sm leading-6 text-text-muted">
-                {sectionDescriptions[activeSection].description}
-              </p>
-
-              <p className="mt-3 text-sm text-text-muted">
-                This section will be populated with frontend sample data
-                before its backend integration.
-              </p>
-            </div>
-          </Card>
+     {isMember && activeSection === 'activity' && (
+          <GroupActivity groupId={id} />
         )}
 
       <div className="flex flex-wrap gap-3">
