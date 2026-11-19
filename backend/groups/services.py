@@ -1,11 +1,42 @@
+
 from decimal import Decimal
-from django.conf import settings
+
 from django.db import transaction
-from .mpesa.stk_query import query_stk_push
 from django.utils import timezone
-from .models import Contribution, Transaction
+
+from .models import (
+    Contribution,
+    Transaction,
+    GroupActivity,
+)
+from .mpesa.stk_query import query_stk_push
 from .mpesa.stk_push import initiate_stk_push
-from .mpesa.reference import generate_account_reference, generate_transaction_description
+from .mpesa.reference import (
+    generate_account_reference,
+    generate_transaction_description,
+)
+
+
+def log_group_activity(
+    *,
+    group,
+    actor,
+    category,
+    action,
+    description,
+    metadata=None,
+):
+    """
+    Create an activity entry for a group action.
+    """
+    return GroupActivity.objects.create(
+        group=group,
+        actor=actor,
+        category=category,
+        action=action,
+        description=description,
+        metadata=metadata or {},
+    )
 
 
 @transaction.atomic
@@ -13,7 +44,10 @@ def process_successful_payment(transaction_id, amount):
     payment = (
         Transaction.objects
         .select_for_update()
-        .select_related("contribution")
+        .select_related(
+            "contribution__member__user",
+            "contribution__round__cycle__group",
+        )
         .get(id=transaction_id)
     )
 
@@ -79,9 +113,25 @@ def process_successful_payment(transaction_id, amount):
         ]
     )
 
+    member = contribution.member.user
+
+    log_group_activity(
+        group=contribution.round.cycle.group,
+        actor=member,
+        category=GroupActivity.Category.PAYMENT,
+        action="PAYMENT_RECEIVED",
+        description=(
+            f"{member.username} paid "
+            f"KSh {amount} towards a contribution."
+        ),
+        metadata={
+            "transaction_id": payment.id,
+            "contribution_id": contribution.id,
+            "amount": str(amount),
+        },
+    )
+
     return payment
-
-
 
 
 @transaction.atomic
@@ -94,7 +144,10 @@ def initiate_contribution_payment(
     contribution = (
         Contribution.objects
         .select_for_update()
-        .select_related("member__user", "round__cycle__group")
+        .select_related(
+            "member__user",
+            "round__cycle__group",
+        )
         .get(id=contribution_id)
     )
 
@@ -167,8 +220,25 @@ def initiate_contribution_payment(
         ]
     )
 
-    return payment
+    member = contribution.member.user
 
+    log_group_activity(
+        group=contribution.round.cycle.group,
+        actor=member,
+        category=GroupActivity.Category.PAYMENT,
+        action="PAYMENT_INITIATED",
+        description=(
+            f"{member.username} initiated "
+            f"a contribution payment of KSh {payment_amount}."
+        ),
+        metadata={
+            "transaction_id": payment.id,
+            "contribution_id": contribution.id,
+            "amount": str(payment_amount),
+        },
+    )
+
+    return payment
 
 
 @transaction.atomic
@@ -176,7 +246,10 @@ def waive_contribution(contribution_id, amount, admin_user, reason):
     contribution = (
         Contribution.objects
         .select_for_update()
-        .select_related("member__user", "round__cycle__group")
+        .select_related(
+            "member__user",
+            "round__cycle__group",
+        )
         .get(id=contribution_id)
     )
 
@@ -251,6 +324,22 @@ def waive_contribution(contribution_id, amount, admin_user, reason):
             "status",
             "updated_at",
         ]
+    )
+
+    log_group_activity(
+        group=contribution.round.cycle.group,
+        actor=admin_user,
+        category=GroupActivity.Category.CONTRIBUTION,
+        action="CONTRIBUTION_WAIVED",
+        description=(
+            f"{admin_user.username} waived KSh {waiver_amount} "
+            f"from a member's contribution."
+        ),
+        metadata={
+            "contribution_id": contribution.id,
+            "amount": str(waiver_amount),
+            "reason": reason,
+        },
     )
 
     return contribution
