@@ -21,9 +21,16 @@ load_dotenv(BASE_DIR.parent / '.env')
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
-    raise ValueError("The SECRET_KEY environment variable is missing from your .env file!")
+    raise ValueError("The SECRET_KEY environment variable is missing!")
 
-DEBUG = os.getenv("DEBUG") == "True"
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
 CELERY_BROKER_URL = os.getenv("REDIS_URL")
 CELERY_RESULT_BACKEND = os.getenv("REDIS_URL")
 
@@ -47,20 +54,35 @@ MPESA_ENVIRONMENT = os.getenv("MPESA_ENVIRONMENT", "sandbox")
 MPESA_CALLBACK_URL = os.getenv("MPESA_CALLBACK_URL")
 
 
-# M-Pesa B2C Payout Settings
+# =====================================
+# M-PESA B2C CONFIGURATION
+# =====================================
+
+MPESA_B2C_CONSUMER_KEY = os.getenv("MPESA_B2C_CONSUMER_KEY")
+MPESA_B2C_CONSUMER_SECRET = os.getenv("MPESA_B2C_CONSUMER_SECRET")
+
+MPESA_B2C_ENVIRONMENT = os.getenv(
+    "MPESA_B2C_ENVIRONMENT",
+    "sandbox",
+)
+
 MPESA_B2C_INITIATOR_NAME = os.getenv("MPESA_B2C_INITIATOR_NAME")
 MPESA_B2C_INITIATOR_PASSWORD = os.getenv("MPESA_B2C_INITIATOR_PASSWORD")
 MPESA_B2C_SECURITY_CREDENTIAL = os.getenv("MPESA_B2C_SECURITY_CREDENTIAL")
-MPESA_B2C_SHORTCODE = os.getenv("MPESA_B2C_SHORTCODE", MPESA_SHORTCODE)
+
+MPESA_B2C_SHORTCODE = os.getenv("MPESA_B2C_SHORTCODE")
+
 MPESA_B2C_RESULT_URL = os.getenv("MPESA_B2C_RESULT_URL")
 MPESA_B2C_TIMEOUT_URL = os.getenv("MPESA_B2C_TIMEOUT_URL")
+MPESA_B2C_STATUS_RESULT_URL = os.getenv("MPESA_B2C_STATUS_RESULT_URL")
+MPESA_B2C_STATUS_TIMEOUT_URL = os.getenv("MPESA_B2C_STATUS_TIMEOUT_URL")
 
 
-ALLOWED_HOSTS = [
-    "127.0.0.1",
-    "localhost",
-    "sprint-siren-tattling.ngrok-free.dev",
-]
+
+ALLOWED_HOSTS = os.getenv(
+    "ALLOWED_HOSTS",
+    "127.0.0.1,localhost",
+).split(",")
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 DEFAULT_FROM_EMAIL = os.getenv(
@@ -91,6 +113,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -131,6 +154,8 @@ DATABASES = {
         'PASSWORD': os.getenv("DB_PASSWORD"),
         'HOST': os.getenv("DB_HOST"),
         'PORT': os.getenv("DB_PORT"),
+        'CONN_MAX_AGE': 600,
+        'CONN_HEALTH_CHECKS': True,
     }
 }
 
@@ -188,8 +213,17 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
@@ -213,7 +247,18 @@ CELERY_BEAT_SCHEDULE = {
 
 
 
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = False
+
+CORS_ALLOWED_ORIGINS = os.getenv(
+    "CORS_ALLOWED_ORIGINS",
+    "http://localhost:5173",
+).split(",")
+
+CSRF_TRUSTED_ORIGINS = os.getenv(
+    "CSRF_TRUSTED_ORIGINS",
+    "http://localhost:5173",
+).split(",")
+
 AUTH_USER_MODEL = 'users.User'
 
 
