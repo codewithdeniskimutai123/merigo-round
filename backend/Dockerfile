@@ -25,4 +25,4 @@ USER appuser
 EXPOSE 8000
 
 # Start Django using Gunicorn
-CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py collectstatic --noinput && exec gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 2 --threads 4 --timeout 120"]
+CMD ["sh", "-c", "echo 'STEP 1: Starting database migrations...' && python manage.py migrate --noinput && echo 'STEP 2: Database migrations completed.' && echo 'STEP 3: Collecting static files...' && python manage.py collectstatic --noinput && echo 'STEP 4: Static files collected.' && echo 'STEP 5: Starting Gunicorn on port ${PORT:-8000}...' && exec gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 2 --threads 4 --timeout 120"]
