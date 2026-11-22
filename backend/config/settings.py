@@ -14,6 +14,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from celery.schedules import crontab
 from datetime import timedelta
+import cloudinary
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -158,6 +159,14 @@ DATABASES = {
         'CONN_HEALTH_CHECKS': True,
     }
 }
+
+
+cloudinary.config(
+    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.getenv("CLOUDINARY_API_KEY"),
+    api_secret=os.getenv("CLOUDINARY_API_SECRET"),
+    secure=True,
+)
 
 
 # Password validation

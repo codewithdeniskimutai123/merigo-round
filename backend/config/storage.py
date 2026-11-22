@@ -1,31 +1,44 @@
-
 import os
 from pathlib import PurePosixPath
 
 import cloudinary
 import cloudinary.uploader
-
+from django.core.exceptions import ImproperlyConfigured
 from django.core.files.storage import Storage
+from django.utils.deconstruct import deconstructible
 
 
+@deconstructible
 class CloudinaryMediaStorage(Storage):
     """Store uploaded media files in Cloudinary."""
 
     def __init__(self):
+        cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME")
+        api_key = os.getenv("CLOUDINARY_API_KEY")
+        api_secret = os.getenv("CLOUDINARY_API_SECRET")
+
+        if not all([cloud_name, api_key, api_secret]):
+            raise ImproperlyConfigured(
+                "Missing CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, or CLOUDINARY_API_SECRET."
+            )
+
         cloudinary.config(
-            cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
-            api_key=os.getenv("CLOUDINARY_API_KEY"),
-            api_secret=os.getenv("CLOUDINARY_API_SECRET"),
+            cloud_name=cloud_name,
+            api_key=api_key,
+            api_secret=api_secret,
             secure=True,
         )
 
     def _save(self, name, content):
         public_id = PurePosixPath(name).with_suffix("").as_posix()
 
-        content.seek(0)
+        # Extract the underlying file stream so Cloudinary SDK accepts it cleanly
+        file_obj = getattr(content, "file", content)
+        if hasattr(file_obj, "seek"):
+            file_obj.seek(0)
 
         result = cloudinary.uploader.upload(
-            content,
+            file_obj,
             public_id=public_id,
             resource_type="image",
             unique_filename=True,
@@ -43,12 +56,15 @@ class CloudinaryMediaStorage(Storage):
         return False
 
     def url(self, name):
+        if not name:
+            return ""
         return cloudinary.CloudinaryImage(name).build_url(
             secure=True,
         )
 
     def delete(self, name):
-        cloudinary.uploader.destroy(
-            name,
-            resource_type="image",
-        )
+        if name:
+            cloudinary.uploader.destroy(
+                name,
+                resource_type="image",
+            )
