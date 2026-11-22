@@ -13,9 +13,10 @@ class CloudinaryMediaStorage(Storage):
     """Store uploaded media files in Cloudinary."""
 
     def __init__(self):
-        cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME")
-        api_key = os.getenv("CLOUDINARY_API_KEY")
-        api_secret = os.getenv("CLOUDINARY_API_SECRET")
+        cloud_name = (os.getenv("CLOUDINARY_CLOUD_NAME") or "").strip()
+        api_key = (os.getenv("CLOUDINARY_API_KEY") or "").strip()
+        api_secret = (os.getenv("CLOUDINARY_API_SECRET") or "").strip()
+
 
         if not all([cloud_name, api_key, api_secret]):
             raise ImproperlyConfigured(
