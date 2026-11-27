@@ -1374,6 +1374,7 @@ def cycle_overview(request, pk, cycle_id):
         status=status.HTTP_200_OK,
     )
 
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def cycle_order_details(request, pk, cycle_id):
@@ -1403,7 +1404,10 @@ def cycle_order_details(request, pk, cycle_id):
 
     members = []
 
-    if draw_complete:
+    if cycle.order_status in [
+        Cycle.OrderStatus.OPEN,
+        Cycle.OrderStatus.LOCKED,
+    ]:
         cycle_memberships = CycleMembership.objects.filter(
             cycle=cycle,
             membership__status=GroupMembership.Status.ACTIVE,
@@ -1429,6 +1433,7 @@ def cycle_order_details(request, pk, cycle_id):
         "order_status": cycle.order_status,
         "members": members,
     })
+
 
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
@@ -1523,20 +1528,30 @@ def cycle_swap_request(request, pk, cycle_id):
         )
 
     data = [
-        {
-            "id": swap.id,
-            "requester": swap.requester_id,
-            "requester_username": swap.requester.membership.user.username,
-            "requester_position": swap.requester.position,
-            "target": swap.target_id,
-            "target_username": swap.target.membership.user.username,
-            "target_position": swap.target.position,
-            "status": swap.status,
-            "requested_at": swap.requested_at,
-            "responded_at": swap.responded_at,
-        }
-        for swap in swaps
-    ]
+    {
+        "id": swap.id,
+        "requester": {
+            "membership_id": swap.requester.membership_id,
+            "user_id": swap.requester.membership.user_id,
+            "username": swap.requester.membership.user.username,
+            "first_name": swap.requester.membership.user.first_name,
+            "last_name": swap.requester.membership.user.last_name,
+            "position": swap.requester.position,
+        },
+        "target": {
+            "membership_id": swap.target.membership_id,
+            "user_id": swap.target.membership.user_id,
+            "username": swap.target.membership.user.username,
+            "first_name": swap.target.membership.user.first_name,
+            "last_name": swap.target.membership.user.last_name,
+            "position": swap.target.position,
+        },
+        "status": swap.status,
+        "requested_at": swap.requested_at,
+        "responded_at": swap.responded_at,
+    }
+    for swap in swaps
+]
 
     return Response(data, status=status.HTTP_200_OK)
 

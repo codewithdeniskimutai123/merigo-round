@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 
 import Card from '../../../../../components/Card.jsx'
 import Button from '../../../../../components/Button.jsx'
-
+import { getCurrentUser } from '../../../../../api/authApi.js'
 import {
   useRequestCycleSwap,
   useAcceptCycleSwap,
@@ -78,6 +78,29 @@ export default function PositionSwaps({
   const requestSwapMutation = useRequestCycleSwap(groupId, cycleId)
   const acceptSwapMutation = useAcceptCycleSwap(groupId, cycleId)
   const rejectSwapMutation = useRejectCycleSwap(groupId, cycleId)
+  const [currentUser, setCurrentUser] = useState(null)
+
+  useEffect(() => {
+  let isMounted = true
+
+  async function loadCurrentUser() {
+    try {
+      const user = await getCurrentUser()
+
+      if (isMounted) {
+        setCurrentUser(user)
+      }
+    } catch {
+      // Keep the component available if user details cannot be loaded.
+    }
+  }
+
+  loadCurrentUser()
+
+  return () => {
+    isMounted = false
+  }
+}, [])
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -94,7 +117,7 @@ export default function PositionSwaps({
   const orderStatus = orderData?.order_status
   const myMembershipId = orderData?.my_draw_status?.membership_id
 
-  const swapDeadline = orderData?.swap_deadline ?? null
+  const swapDeadline = orderData?.cycle?.swap_deadline ?? null
 
   const parsedSwapDeadline = swapDeadline
     ? new Date(swapDeadline).getTime()
@@ -110,7 +133,7 @@ export default function PositionSwaps({
 
   const availableMembers = members.filter(
     (member) =>
-      String(member.membership_id) !== String(myMembershipId),
+      String(member.user_id) !== String(currentUser?.id),
   )
 
   const canShowRequestForm =
@@ -123,17 +146,16 @@ export default function PositionSwaps({
     hasValidSwapDeadline &&
     !swapDeadlinePassed
 
-  const outgoingRequests = swaps.filter(
-    (swap) =>
-      String(swap.requester?.membership_id) === String(myMembershipId),
-  )
+const outgoingRequests = swaps.filter(
+  (swap) =>
+    String(swap.requester?.user_id) === String(currentUser?.id),
+)
 
-  const incomingRequests = swaps.filter(
-    (swap) =>
-      swap.status === 'PENDING' &&
-      String(swap.target?.membership_id) === String(myMembershipId) &&
-      String(swap.requester?.membership_id) !== String(myMembershipId),
-  )
+const incomingRequests = swaps.filter(
+  (swap) =>
+    swap.status === 'PENDING' &&
+    String(swap.target?.user_id) === String(currentUser?.id),
+)
 
   function handleRequestSwap(event) {
     event.preventDefault()
@@ -364,8 +386,8 @@ export default function PositionSwaps({
 
                 {availableMembers.map((member) => (
                   <option
-                    key={member.membership_id}
-                    value={member.membership_id}
+                    key={member.cycle_membership_id}
+                    value={member.cycle_membership_id}
                   >
                     {getMemberName(member)} — Position {member.position}
                   </option>
@@ -466,7 +488,7 @@ export default function PositionSwaps({
             <div className="space-y-3">
               {incomingRequests.map((swap) =>
                 renderSwapRequest(swap, {
-                  showActions: !isAdmin,
+                  showActions: true,
                   isIncoming: true,
                 }),
               )}
